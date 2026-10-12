@@ -5,8 +5,11 @@
  * Verifies:
  * 1. Fatal rejection of known production Supabase project refs and domains
  * 2. Strict tenant boundaries and non-bypassable permission checks in demo auth
- * 3. AMD Token Factory server-only encapsulation and RADEON_API_KEY safety
- * 4. Synthetic seed integrity and lack of production database references
+ * 3. AMD Token Factory server-only encapsulation, documented endpoints (/models, /chat/completions, /usage)
+ * 4. Explicitly labeled test fixtures (zero invented metrics)
+ * 5. Correct migration ordering (Schema 20261012100000 < Seed 20261012110000)
+ * 6. Audit of all 16 tables for RLS policies
+ * 7. Safe SECURITY DEFINER search paths and permissions
  */
 
 const fs = require('fs');
@@ -92,7 +95,7 @@ runTest('Rejects production domain: rasalilabs.com', () => {
 runTest('Allows valid local and dedicated hackathon Supabase URLs', () => {
   assert.doesNotThrow(() => {
     assertNotProductionEndpoint('http://localhost:54321', 'Local Supabase');
-    assertNotProductionEndpoint('https://hackathon-rocm-amd-act3.supabase.co', 'Hackathon Supabase');
+    assertNotProductionEndpoint('https://uosaqcgfvmxzwpxekoov.supabase.co', 'Hackathon Supabase');
   });
 });
 
@@ -106,7 +109,7 @@ runTest('serverAuth rejects cross-tenant workspace access under demo context', (
   );
 
   assert.ok(
-    serverAuthCode.includes('requestedWorkspaceRaw !== DEMO_RALION_CONTEXT.workspace.id'),
+    serverAuthCode.includes('requestedWorkspaceRaw && !isMatchingWorkspace'),
     'serverAuth must reject requested workspaces not matching demo context'
   );
   assert.ok(
@@ -122,18 +125,35 @@ runTest('serverAuth rejects cross-tenant organization access under demo context'
   );
 
   assert.ok(
-    serverAuthCode.includes('requestedOrgRaw !== DEMO_RALION_CONTEXT.organization.id'),
+    serverAuthCode.includes('requestedOrgRaw && !isMatchingOrg'),
     'serverAuth must reject requested organizations not matching demo context'
   );
 });
 
+runTest('serverAuth uses RFC 4122 UUIDs for synthetic users compatible with Supabase Auth', () => {
+  const serverAuthCode = fs.readFileSync(
+    path.join(__dirname, '../apps/ralion/src/lib/auth/serverAuth.ts'),
+    'utf-8'
+  );
+
+  assert.ok(
+    serverAuthCode.includes('a0000000-0000-0000-0000-000000000001'),
+    'serverAuth must use RFC 4122 user UUID'
+  );
+  assert.ok(
+    serverAuthCode.includes('c0000000-0000-0000-0000-000000000001'),
+    'serverAuth must use RFC 4122 workspace UUID'
+  );
+});
+
 // ─── 3. AMD Token Factory Server-Only Isolation ─────────────────────────────
-console.log('\n--- 3. Testing AMD Token Factory Architecture & RADEON_API_KEY Safety ---');
+console.log('\n--- 3. Testing AMD Token Factory Architecture & Documented Endpoints ---');
+
+const factoryPath = path.join(__dirname, '../packages/ai/src/amdTokenFactory.service.ts');
+const factoryCode = fs.readFileSync(factoryPath, 'utf-8');
 
 runTest('AmdTokenFactoryService is marked server-only and exported in server.ts', () => {
-  const factoryPath = path.join(__dirname, '../packages/ai/src/amdTokenFactory.service.ts');
   assert.ok(fs.existsSync(factoryPath), 'amdTokenFactory.service.ts must exist');
-  const factoryCode = fs.readFileSync(factoryPath, 'utf-8');
   assert.ok(factoryCode.includes("import 'server-only'"), 'Must import server-only');
   assert.ok(factoryCode.includes('process.env.RADEON_API_KEY'), 'Must consume RADEON_API_KEY');
 
@@ -142,6 +162,20 @@ runTest('AmdTokenFactoryService is marked server-only and exported in server.ts'
 
   const clientExport = fs.readFileSync(path.join(__dirname, '../packages/ai/src/client.ts'), 'utf-8');
   assert.ok(!clientExport.includes('amdTokenFactory'), 'Must NEVER be exported in client.ts');
+});
+
+runTest('AmdTokenFactoryService implements documented /models, /chat/completions, and /usage', () => {
+  assert.ok(factoryCode.includes('listModels()'), 'Must implement listModels for /models');
+  assert.ok(factoryCode.includes('createChatCompletion('), 'Must implement createChatCompletion for /chat/completions');
+  assert.ok(factoryCode.includes('getUsage('), 'Must implement getUsage for /usage');
+  assert.ok(!factoryCode.includes('/quota?workspace='), 'Must NOT contain unsupported /quota endpoint');
+  assert.ok(!factoryCode.includes('/mint'), 'Must NOT contain unsupported /mint endpoint');
+});
+
+runTest('Test fixtures are explicitly labeled and omit invented metrics', () => {
+  assert.ok(factoryCode.includes('isFixture: true'), 'Test fixtures must be marked with isFixture: true');
+  assert.ok(factoryCode.includes('fixtureNotice:'), 'Test fixtures must include a descriptive fixtureNotice');
+  assert.ok(!factoryCode.includes('148 tok/s'), 'Must not hardcode invented live token rates');
 });
 
 runTest('RADEON_API_KEY is not leaked into client-accessible env variables', () => {
@@ -153,27 +187,90 @@ runTest('RADEON_API_KEY is not leaked into client-accessible env variables', () 
   assert.ok(!envExample.includes('NEXT_PUBLIC_RADEON_API_KEY'), 'Must NEVER be prefixed with NEXT_PUBLIC_');
 });
 
-runTest('Next.js API route /api/ai/amd/token-factory enforces server auth', () => {
+runTest('Next.js API route /api/ai/amd/token-factory enforces server auth and uses documented endpoints', () => {
   const routePath = path.join(__dirname, '../apps/ralion/src/app/api/ai/amd/token-factory/route.ts');
   assert.ok(fs.existsSync(routePath), 'Route must exist');
   const routeCode = fs.readFileSync(routePath, 'utf-8');
   assert.ok(routeCode.includes('resolveRalionAuthContext'), 'Route must resolve authoritative auth context');
-  assert.ok(routeCode.includes('AmdTokenFactoryService'), 'Route must invoke AmdTokenFactoryService');
+  assert.ok(routeCode.includes('listModels'), 'Route must support listing models');
+  assert.ok(routeCode.includes('createChatCompletion'), 'Route must support chat completion');
 });
 
 // ─── 4. Synthetic Seed Data & Migration Audit ────────────────────────────────
-console.log('\n--- 4. Testing Synthetic Seed Data & Supabase Migrations ---');
+console.log('\n--- 4. Testing Migration Ordering, 16 Tables RLS & Synthetic Seed Data ---');
 
-runTest('Synthetic seed migration exists and contains demo organizations & profiles', () => {
-  const seedMigrationPath = path.join(
-    __dirname,
-    '../supabase/migrations/20261012120000_hackathon_synthetic_seed.sql'
+const schemaMigrationPath = path.join(
+  __dirname,
+  '../supabase/migrations/20261012100000_hackathon_minimal_schema_and_rls.sql'
+);
+const seedMigrationPath = path.join(
+  __dirname,
+  '../supabase/migrations/20261012110000_hackathon_synthetic_seed.sql'
+);
+
+runTest('Migration ordering is correct: Schema (100000) precedes Seed (110000)', () => {
+  assert.ok(fs.existsSync(schemaMigrationPath), 'Schema migration 20261012100000 must exist');
+  assert.ok(fs.existsSync(seedMigrationPath), 'Seed migration 20261012110000 must exist');
+
+  const schemaFile = path.basename(schemaMigrationPath);
+  const seedFile = path.basename(seedMigrationPath);
+  assert.ok(schemaFile < seedFile, 'Lexicographical order must execute schema before seed');
+});
+
+const schemaSql = fs.readFileSync(schemaMigrationPath, 'utf-8');
+
+runTest('All 16 required application tables are created and enforce Row-Level Security', () => {
+  const requiredTables = [
+    'organizations',
+    'workspaces',
+    'profiles',
+    'workspace_members',
+    'business_profiles',
+    'ai_memory',
+    'creative_assets',
+    'ai_jobs',
+    'marketing_campaigns',
+    'social_connections',
+    'social_posts',
+    'workflows',
+    'workflow_executions',
+    'tenant_credit_wallets',
+    'tenant_credit_ledger',
+    'security_audit_logs',
+  ];
+
+  for (const table of requiredTables) {
+    assert.ok(
+      schemaSql.includes(`CREATE TABLE IF NOT EXISTS public.${table}`),
+      `Table public.${table} must be declared in minimal schema`
+    );
+    assert.ok(
+      schemaSql.includes(`ALTER TABLE public.${table} ENABLE ROW LEVEL SECURITY`),
+      `Table public.${table} must enable Row Level Security`
+    );
+  }
+});
+
+runTest('SECURITY DEFINER functions enforce safe search_path and execution privileges', () => {
+  assert.ok(
+    schemaSql.includes('SET search_path = public, pg_temp'),
+    'SECURITY DEFINER functions must set search_path = public, pg_temp'
   );
-  assert.ok(fs.existsSync(seedMigrationPath), 'Synthetic seed migration must exist');
+  assert.ok(
+    schemaSql.includes('REVOKE ALL ON FUNCTION public.is_workspace_member(TEXT) FROM PUBLIC'),
+    'is_workspace_member execution must be revoked from PUBLIC'
+  );
+  assert.ok(
+    schemaSql.includes('REVOKE ALL ON FUNCTION public.is_org_member(TEXT) FROM PUBLIC'),
+    'is_org_member execution must be revoked from PUBLIC'
+  );
+});
+
+runTest('Synthetic seed contains valid Supabase Auth user integration and demo fixtures', () => {
   const seedSql = fs.readFileSync(seedMigrationPath, 'utf-8');
-  assert.ok(seedSql.includes('demo-org-ralion-amd-2026'), 'Must seed demo-org');
-  assert.ok(seedSql.includes('demo-workspace-ralion-amd-2026'), 'Must seed demo-workspace');
-  assert.ok(seedSql.includes('demo-user-ralion-amd-2026'), 'Must seed demo-user');
+  assert.ok(seedSql.includes('auth.users'), 'Must contain conditional seed into auth.users');
+  assert.ok(seedSql.includes('a0000000-0000-0000-0000-000000000001'), 'Must seed primary demo user UUID');
+  assert.ok(seedSql.includes('c0000000-0000-0000-0000-000000000001'), 'Must seed primary demo workspace UUID');
   assert.ok(seedSql.includes('Apex Dynamics ROCm Systems'), 'Must seed synthetic business profile');
   assert.ok(seedSql.includes('AMD Instinct MI300X Global Launch'), 'Must seed synthetic marketing campaigns');
   assert.ok(seedSql.includes('tenant_credit_wallets'), 'Must seed synthetic credit wallets');
@@ -191,30 +288,10 @@ runTest('Confirmed hackathon Supabase project uosaqcgfvmxzwpxekoov is canonical 
 });
 
 runTest('AmdTokenFactoryService targets https://developer.amd.com.cn/radeon/api/v1', () => {
-  const factoryCode = fs.readFileSync(
-    path.join(__dirname, '../packages/ai/src/amdTokenFactory.service.ts'),
-    'utf-8'
-  );
   assert.ok(
     factoryCode.includes('https://developer.amd.com.cn/radeon/api/v1'),
     'DEFAULT_BASE_URL must be https://developer.amd.com.cn/radeon/api/v1'
   );
-});
-
-runTest('Minimal hackathon schema and RLS policies migration is declared', () => {
-  const minimalMigrationPath = path.join(
-    __dirname,
-    '../supabase/migrations/20261012130000_hackathon_minimal_schema_and_rls.sql'
-  );
-  assert.ok(fs.existsSync(minimalMigrationPath), '20261012130000_hackathon_minimal_schema_and_rls.sql must exist');
-  const schemaSql = fs.readFileSync(minimalMigrationPath, 'utf-8');
-  assert.ok(schemaSql.includes('CREATE TABLE IF NOT EXISTS public.organizations'), 'Must declare organizations');
-  assert.ok(schemaSql.includes('CREATE TABLE IF NOT EXISTS public.workspaces'), 'Must declare workspaces');
-  assert.ok(schemaSql.includes('CREATE TABLE IF NOT EXISTS public.business_profiles'), 'Must declare business_profiles');
-  assert.ok(schemaSql.includes('CREATE TABLE IF NOT EXISTS public.creative_assets'), 'Must declare creative_assets');
-  assert.ok(schemaSql.includes('CREATE TABLE IF NOT EXISTS public.marketing_campaigns'), 'Must declare marketing_campaigns');
-  assert.ok(schemaSql.includes('CREATE TABLE IF NOT EXISTS public.tenant_credit_wallets'), 'Must declare tenant_credit_wallets');
-  assert.ok(schemaSql.includes('ENABLE ROW LEVEL SECURITY'), 'Must enable RLS across tables');
 });
 
 runTest('Zero migrations contain forbidden production project references', () => {

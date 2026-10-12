@@ -1,12 +1,13 @@
 -- ==============================================================================
 -- RALION OS — AMD DEVELOPER HACKATHON ACT III
--- MINIMAL HACKATHON CORE SCHEMA & ROW-LEVEL SECURITY (RLS) POLICIES
+-- MIGRATION 1: MINIMAL HACKATHON CORE SCHEMA & ROW-LEVEL SECURITY (RLS) POLICIES
 -- ==============================================================================
 -- Target Supabase Project: ralion-amd-hackathon (uosaqcgfvmxzwpxekoov)
 -- Region: eu-central-1
+-- Execution Order: 1 of 2 (Schema must execute BEFORE seed data)
 -- ==============================================================================
 
--- 1. Enable required extensions
+-- 1. Enable required PostgreSQL extensions
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 
@@ -239,10 +240,49 @@ CREATE TABLE IF NOT EXISTS public.security_audit_logs (
 );
 
 -- ==============================================================================
--- 8. ROW-LEVEL SECURITY (RLS) POLICIES
+-- 8. SECURITY DEFINER HELPER FUNCTIONS (Safe search_path & restricted execution)
 -- ==============================================================================
 
--- Enable RLS across all tables
+CREATE OR REPLACE FUNCTION public.is_workspace_member(ws_id TEXT)
+RETURNS BOOLEAN
+LANGUAGE sql
+SECURITY DEFINER
+STABLE
+SET search_path = public, pg_temp
+AS $$
+  SELECT EXISTS (
+    SELECT 1 FROM public.workspace_members
+    WHERE workspace_id = ws_id
+      AND user_id = auth.uid()::text
+  );
+$$;
+
+CREATE OR REPLACE FUNCTION public.is_org_member(org_id TEXT)
+RETURNS BOOLEAN
+LANGUAGE sql
+SECURITY DEFINER
+STABLE
+SET search_path = public, pg_temp
+AS $$
+  SELECT EXISTS (
+    SELECT 1 FROM public.workspaces w
+    JOIN public.workspace_members wm ON wm.workspace_id = w.id
+    WHERE w.organization_id = org_id
+      AND wm.user_id = auth.uid()::text
+  );
+$$;
+
+REVOKE ALL ON FUNCTION public.is_workspace_member(TEXT) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.is_workspace_member(TEXT) TO authenticated, service_role, anon;
+
+REVOKE ALL ON FUNCTION public.is_org_member(TEXT) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.is_org_member(TEXT) TO authenticated, service_role, anon;
+
+-- ==============================================================================
+-- 9. ROW-LEVEL SECURITY (RLS) POLICIES ON ALL 16 TABLES
+-- ==============================================================================
+
+-- Enable RLS across all 16 application tables
 ALTER TABLE public.organizations ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.workspaces ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
@@ -260,75 +300,98 @@ ALTER TABLE public.tenant_credit_wallets ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.tenant_credit_ledger ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.security_audit_logs ENABLE ROW LEVEL SECURITY;
 
--- Helper security function to check workspace membership
-CREATE OR REPLACE FUNCTION public.is_workspace_member(ws_id TEXT)
-RETURNS BOOLEAN
-LANGUAGE sql
-SECURITY DEFINER
-STABLE
-AS $$
-  SELECT EXISTS (
-    SELECT 1 FROM public.workspace_members
-    WHERE workspace_id = ws_id
-      AND user_id = auth.uid()::text
-  );
-$$;
-
--- Helper security function to check organization membership
-CREATE OR REPLACE FUNCTION public.is_org_member(org_id TEXT)
-RETURNS BOOLEAN
-LANGUAGE sql
-SECURITY DEFINER
-STABLE
-AS $$
-  SELECT EXISTS (
-    SELECT 1 FROM public.workspaces w
-    JOIN public.workspace_members wm ON wm.workspace_id = w.id
-    WHERE w.organization_id = org_id
-      AND wm.user_id = auth.uid()::text
-  );
-$$;
-
--- RLS Policies: Workspace-scoped read/write
 DO $$
 BEGIN
-  -- Workspaces
-  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'workspaces' AND policyname = 'ws_member_select') THEN
-    CREATE POLICY ws_member_select ON public.workspaces FOR SELECT USING (public.is_workspace_member(id) OR owner_id = auth.uid()::text);
+  -- 1. Organizations
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'organizations' AND policyname = 'org_member_select') THEN
+    CREATE POLICY org_member_select ON public.organizations FOR SELECT USING (public.is_org_member(id));
   END IF;
 
-  -- Business Profiles
+  -- 2. Workspaces
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'workspaces' AND policyname = 'ws_member_select') THEN
+    CREATE POLICY ws_member_select ON public.workspaces FOR SELECT USING (public.is_workspace_member(id) OR owner_id = auth.uid()::text);
+    CREATE POLICY ws_owner_update ON public.workspaces FOR UPDATE USING (owner_id = auth.uid()::text);
+  END IF;
+
+  -- 3. Profiles
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'profiles' AND policyname = 'profiles_select') THEN
+    CREATE POLICY profiles_select ON public.profiles FOR SELECT USING (true);
+    CREATE POLICY profiles_self_update ON public.profiles FOR UPDATE USING (id = auth.uid()::text);
+  END IF;
+
+  -- 4. Workspace Members
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'workspace_members' AND policyname = 'wm_member_select') THEN
+    CREATE POLICY wm_member_select ON public.workspace_members FOR SELECT USING (public.is_workspace_member(workspace_id));
+  END IF;
+
+  -- 5. Business Profiles
   IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'business_profiles' AND policyname = 'bp_member_select') THEN
     CREATE POLICY bp_member_select ON public.business_profiles FOR SELECT USING (public.is_workspace_member(workspace_id));
     CREATE POLICY bp_member_write ON public.business_profiles FOR ALL USING (public.is_workspace_member(workspace_id));
   END IF;
 
-  -- Creative Assets
+  -- 6. AI Memory
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'ai_memory' AND policyname = 'ai_mem_member_select') THEN
+    CREATE POLICY ai_mem_member_select ON public.ai_memory FOR SELECT USING (public.is_workspace_member(workspace_id));
+    CREATE POLICY ai_mem_member_write ON public.ai_memory FOR ALL USING (public.is_workspace_member(workspace_id));
+  END IF;
+
+  -- 7. Creative Assets
   IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'creative_assets' AND policyname = 'ca_member_select') THEN
     CREATE POLICY ca_member_select ON public.creative_assets FOR SELECT USING (public.is_workspace_member(workspace_id));
     CREATE POLICY ca_member_write ON public.creative_assets FOR ALL USING (public.is_workspace_member(workspace_id));
   END IF;
 
-  -- Marketing Campaigns
+  -- 8. AI Jobs
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'ai_jobs' AND policyname = 'ai_jobs_member_select') THEN
+    CREATE POLICY ai_jobs_member_select ON public.ai_jobs FOR SELECT USING (public.is_workspace_member(workspace_id));
+    CREATE POLICY ai_jobs_member_write ON public.ai_jobs FOR ALL USING (public.is_workspace_member(workspace_id));
+  END IF;
+
+  -- 9. Marketing Campaigns
   IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'marketing_campaigns' AND policyname = 'mc_member_select') THEN
     CREATE POLICY mc_member_select ON public.marketing_campaigns FOR SELECT USING (public.is_workspace_member(workspace_id));
     CREATE POLICY mc_member_write ON public.marketing_campaigns FOR ALL USING (public.is_workspace_member(workspace_id));
   END IF;
 
-  -- Social Posts
+  -- 10. Social Connections
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'social_connections' AND policyname = 'sc_member_select') THEN
+    CREATE POLICY sc_member_select ON public.social_connections FOR SELECT USING (public.is_workspace_member(workspace_id));
+    CREATE POLICY sc_member_write ON public.social_connections FOR ALL USING (public.is_workspace_member(workspace_id));
+  END IF;
+
+  -- 11. Social Posts
   IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'social_posts' AND policyname = 'sp_member_select') THEN
     CREATE POLICY sp_member_select ON public.social_posts FOR SELECT USING (public.is_workspace_member(workspace_id));
     CREATE POLICY sp_member_write ON public.social_posts FOR ALL USING (public.is_workspace_member(workspace_id));
   END IF;
 
-  -- Workflows
+  -- 12. Workflows
   IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'workflows' AND policyname = 'wf_member_select') THEN
     CREATE POLICY wf_member_select ON public.workflows FOR SELECT USING (public.is_workspace_member(workspace_id));
     CREATE POLICY wf_member_write ON public.workflows FOR ALL USING (public.is_workspace_member(workspace_id));
   END IF;
 
-  -- Credit Wallets
+  -- 13. Workflow Executions
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'workflow_executions' AND policyname = 'wfe_member_select') THEN
+    CREATE POLICY wfe_member_select ON public.workflow_executions FOR SELECT USING (public.is_workspace_member(workspace_id));
+    CREATE POLICY wfe_member_write ON public.workflow_executions FOR ALL USING (public.is_workspace_member(workspace_id));
+  END IF;
+
+  -- 14. Tenant Credit Wallets
   IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'tenant_credit_wallets' AND policyname = 'cw_member_select') THEN
     CREATE POLICY cw_member_select ON public.tenant_credit_wallets FOR SELECT USING (public.is_org_member(organization_id));
+  END IF;
+
+  -- 15. Tenant Credit Ledger
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'tenant_credit_ledger' AND policyname = 'cl_member_select') THEN
+    CREATE POLICY cl_member_select ON public.tenant_credit_ledger FOR SELECT USING (public.is_org_member(organization_id));
+  END IF;
+
+  -- 16. Security Audit Logs
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'security_audit_logs' AND policyname = 'sal_member_select') THEN
+    CREATE POLICY sal_member_select ON public.security_audit_logs FOR SELECT USING (
+      workspace_id IS NULL OR public.is_workspace_member(workspace_id)
+    );
   END IF;
 END $$;

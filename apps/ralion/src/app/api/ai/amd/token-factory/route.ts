@@ -15,13 +15,29 @@ export async function GET(request: NextRequest) {
     );
   }
 
+  const { searchParams } = new URL(request.url);
+  const action = searchParams.get('action') || 'models';
+
   try {
-    const quota = await AmdTokenFactoryService.getQuota(auth.context.workspace.id);
+    if (action === 'usage') {
+      const usage = await AmdTokenFactoryService.getUsage(auth.context.workspace.id);
+      return corsJsonResponse(
+        {
+          success: true,
+          workspaceId: auth.context.workspace.id,
+          ...usage,
+        },
+        { status: 200 },
+        request
+      );
+    }
+
+    const models = await AmdTokenFactoryService.listModels();
     return corsJsonResponse(
       {
         success: true,
         workspaceId: auth.context.workspace.id,
-        quota,
+        ...models,
       },
       { status: 200 },
       request
@@ -31,7 +47,7 @@ export async function GET(request: NextRequest) {
       {
         success: false,
         error: 'TOKEN_FACTORY_ERROR',
-        message: error.message || 'Failed to retrieve Token Factory quota',
+        message: error.message || 'Failed to retrieve AMD Token Factory data',
       },
       { status: 500 },
       request
@@ -51,12 +67,14 @@ export async function POST(request: NextRequest) {
 
   try {
     const body = await request.json().catch(() => ({}));
-    const requestedTokens = Math.min(Math.max(Number(body.tokens) || 1000, 1), 100_000);
+    const messages = Array.isArray(body.messages) ? body.messages : [{ role: 'user', content: String(body.prompt || '') }];
 
-    const result = await AmdTokenFactoryService.mintTokens(
-      auth.context.workspace.id,
-      requestedTokens
-    );
+    const result = await AmdTokenFactoryService.createChatCompletion({
+      model: body.model,
+      messages,
+      temperature: body.temperature,
+      max_tokens: body.max_tokens,
+    });
 
     return corsJsonResponse(
       {
@@ -70,8 +88,8 @@ export async function POST(request: NextRequest) {
     return corsJsonResponse(
       {
         success: false,
-        error: 'TOKEN_MINT_ERROR',
-        message: error.message || 'Failed to mint Token Factory tokens',
+        error: 'CHAT_COMPLETION_ERROR',
+        message: error.message || 'Failed to execute AMD Token Factory chat completion',
       },
       { status: 500 },
       request

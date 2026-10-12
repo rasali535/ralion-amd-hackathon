@@ -57,6 +57,8 @@ export const getServiceSupabase = getPrivilegedSupabase;
 function canonicalUuid(raw?: string | null): string | null {
   if (!raw) return null;
   const value = raw.trim();
+  if (value === 'demo-workspace-ralion-amd-2026') return 'c0000000-0000-0000-0000-000000000001';
+  if (value === 'demo-org-ralion-amd-2026') return 'b0000000-0000-0000-0000-000000000001';
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value) ? value : null;
 }
 
@@ -185,7 +187,7 @@ export function extractAuthToken(request: NextRequest): string | null {
 
 export const DEMO_RALION_CONTEXT: RalionSessionContext = {
   user: {
-    id: 'demo-user-ralion-amd-2026',
+    id: 'a0000000-0000-0000-0000-000000000001',
     email: 'demo@ralion.ai',
     app_metadata: { role: 'PLATFORM_ADMIN' },
     user_metadata: { full_name: 'AMD Hackathon Developer' },
@@ -193,27 +195,27 @@ export const DEMO_RALION_CONTEXT: RalionSessionContext = {
     created_at: '2026-10-12T00:00:00.000Z',
   } as any,
   profile: {
-    id: 'demo-user-ralion-amd-2026',
+    id: 'a0000000-0000-0000-0000-000000000001',
     fullName: 'AMD Hackathon Developer',
     email: 'demo@ralion.ai',
     avatarUrl: null,
   },
   workspace: {
-    id: 'demo-workspace-ralion-amd-2026',
+    id: 'c0000000-0000-0000-0000-000000000001',
     name: 'AMD ROCm AI Lab',
     slug: 'amd-rocm-lab',
-    owner_id: 'demo-user-ralion-amd-2026',
-    organization_id: 'demo-org-ralion-amd-2026',
+    owner_id: 'a0000000-0000-0000-0000-000000000001',
+    organization_id: 'b0000000-0000-0000-0000-000000000001',
   },
   organization: {
-    id: 'demo-org-ralion-amd-2026',
+    id: 'b0000000-0000-0000-0000-000000000001',
     name: 'AMD Developer Hackathon ACT III',
     tier: 'ENTERPRISE',
   },
   membership: {
-    id: 'demo-mem-ralion-amd-2026',
-    workspace_id: 'demo-workspace-ralion-amd-2026',
-    user_id: 'demo-user-ralion-amd-2026',
+    id: 'e0000000-0000-0000-0000-000000000001',
+    workspace_id: 'c0000000-0000-0000-0000-000000000001',
+    user_id: 'a0000000-0000-0000-0000-000000000001',
     role: 'owner',
   },
   isPlatformAdmin: true,
@@ -242,7 +244,16 @@ export async function resolveRalionAuthContext(
     const requestedOrgRaw = request.headers.get('x-organization-id');
 
     // Demo access must not bypass tenant permission boundaries or access external tenants
-    if (requestedWorkspaceRaw && requestedWorkspaceRaw !== DEMO_RALION_CONTEXT.workspace.id) {
+    const isMatchingWorkspace =
+      requestedWorkspaceRaw === DEMO_RALION_CONTEXT.workspace.id ||
+      requestedWorkspaceRaw === 'demo-workspace-ralion-amd-2026' ||
+      requestedWorkspaceRaw === 'c0000000-0000-0000-0000-000000000001';
+    const isMatchingOrg =
+      requestedOrgRaw === DEMO_RALION_CONTEXT.organization.id ||
+      requestedOrgRaw === 'demo-org-ralion-amd-2026' ||
+      requestedOrgRaw === 'b0000000-0000-0000-0000-000000000001';
+
+    if (requestedWorkspaceRaw && !isMatchingWorkspace) {
       return {
         status: 'FORBIDDEN',
         context: null,
@@ -251,7 +262,7 @@ export async function resolveRalionAuthContext(
         httpStatus: 403,
       };
     }
-    if (requestedOrgRaw && requestedOrgRaw !== DEMO_RALION_CONTEXT.organization.id) {
+    if (requestedOrgRaw && !isMatchingOrg) {
       return {
         status: 'FORBIDDEN',
         context: null,

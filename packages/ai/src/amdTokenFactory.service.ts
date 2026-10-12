@@ -1,38 +1,76 @@
 /**
  * Ralion OS — AMD Developer Hackathon ACT III
- * AMD Token Factory Service (Exclusively Server-Side)
+ * AMD Token Factory & Radeon Inference Service (Exclusively Server-Side)
  *
- * Manages AMD Radeon / ROCm compute token allocation and quota validation
- * using RADEON_API_KEY strictly within server execution boundaries.
- * The RADEON_API_KEY is never leaked or exported to browser client bundles.
+ * Implements the documented AMD Radeon / ROCm Developer API endpoints:
+ * - GET  /models
+ * - POST /chat/completions
+ * - GET  /usage
+ *
+ * Uses RADEON_API_KEY strictly on the server side. Never exposed to browser bundles.
+ * Test fixtures are explicitly labeled; no invented metrics or fake device outputs.
  */
 
 import 'server-only';
 
-export interface AmdTokenFactoryQuota {
-  availableTokens: number;
-  allocatedTokens: number;
-  rateLimitPerMinute: number;
-  tier: 'RADEON_COMMUNITY' | 'RADEON_PRO' | 'INSTINCT_ENTERPRISE';
-  hardwareEngine: string;
-  isMock: boolean;
+export interface AmdModel {
+  id: string;
+  object: 'model';
+  created?: number;
+  owned_by: string;
 }
 
-export interface AmdTokenMintResult {
-  success: boolean;
-  mintedTokens: number;
-  remainingTokens: number;
-  tokenId: string;
-  expiresAt: string;
-  telemetry: {
-    engine: string;
-    rocmVersion: string;
-    accelerator: string;
+export interface AmdModelListResponse {
+  object: 'list';
+  data: AmdModel[];
+  isFixture?: boolean;
+  fixtureNotice?: string;
+}
+
+export interface AmdChatMessage {
+  role: 'system' | 'user' | 'assistant';
+  content: string;
+}
+
+export interface AmdChatCompletionRequest {
+  model?: string;
+  messages: AmdChatMessage[];
+  temperature?: number;
+  max_tokens?: number;
+  stream?: boolean;
+}
+
+export interface AmdChatCompletionResponse {
+  id: string;
+  object: 'chat.completion';
+  created: number;
+  model: string;
+  choices: Array<{
+    index: number;
+    message: AmdChatMessage;
+    finish_reason: string;
+  }>;
+  usage: {
+    prompt_tokens: number;
+    completion_tokens: number;
+    total_tokens: number;
   };
+  isFixture?: boolean;
+  fixtureNotice?: string;
+}
+
+export interface AmdUsageResponse {
+  object: 'usage';
+  total_tokens: number;
+  prompt_tokens: number;
+  completion_tokens: number;
+  workspace_id?: string;
+  isFixture?: boolean;
+  fixtureNotice?: string;
 }
 
 export class AmdTokenFactoryService {
-  private static readonly DEFAULT_BASE_URL = 'https://developer.amd.com.cn/radeon/api/v1';
+  public static readonly DEFAULT_BASE_URL = 'https://developer.amd.com.cn/radeon/api/v1';
 
   private static getApiKey(): string | null {
     return process.env.RADEON_API_KEY || null;
@@ -43,125 +81,132 @@ export class AmdTokenFactoryService {
   }
 
   /**
-   * Evaluates Token Factory status and available hardware compute budget.
-   * Runs exclusively server-side.
+   * Retrieves available models from the AMD Radeon API (GET /models).
    */
-  static async getQuota(workspaceId: string): Promise<AmdTokenFactoryQuota> {
+  static async listModels(): Promise<AmdModelListResponse> {
     const apiKey = this.getApiKey();
 
     if (!apiKey) {
-      // Offline/demo developer fallback
       return {
-        availableTokens: 500_000,
-        allocatedTokens: 12_450,
-        rateLimitPerMinute: 6_000,
-        tier: 'INSTINCT_ENTERPRISE',
-        hardwareEngine: 'AMD ROCm 6.2 Token Factory (Simulated)',
-        isMock: true,
+        object: 'list',
+        data: [
+          {
+            id: 'amd-rocm-llama-3-8b-instruct',
+            object: 'model',
+            owned_by: 'amd-radeon',
+          },
+          {
+            id: 'amd-rocm-mixtral-8x7b-instruct',
+            object: 'model',
+            owned_by: 'amd-radeon',
+          },
+        ],
+        isFixture: true,
+        fixtureNotice: 'TEST_FIXTURE: No RADEON_API_KEY configured; returning offline test catalog.',
       };
     }
 
-    try {
-      const response = await fetch(`${this.getBaseUrl()}/quota?workspace=${encodeURIComponent(workspaceId)}`, {
-        method: 'GET',
-        headers: {
-          'Authorization': `Bearer ${apiKey}`,
-          'Content-Type': 'application/json',
-          'X-Ralion-Workspace': workspaceId,
-        },
-      });
+    const response = await fetch(`${this.getBaseUrl()}/models`, {
+      method: 'GET',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+    });
 
-      if (!response.ok) {
-        throw new Error(`Token Factory returned status ${response.status}`);
-      }
-
-      const data = await response.json();
-      return {
-        availableTokens: data.available_tokens ?? 1_000_000,
-        allocatedTokens: data.allocated_tokens ?? 0,
-        rateLimitPerMinute: data.rate_limit_per_min ?? 10_000,
-        tier: 'INSTINCT_ENTERPRISE',
-        hardwareEngine: 'AMD ROCm 6.2 Instinct Hardware Cluster',
-        isMock: false,
-      };
-    } catch {
-      return {
-        availableTokens: 500_000,
-        allocatedTokens: 12_450,
-        rateLimitPerMinute: 6_000,
-        tier: 'INSTINCT_ENTERPRISE',
-        hardwareEngine: 'AMD ROCm 6.2 Token Factory (Offline Fallback)',
-        isMock: true,
-      };
+    if (!response.ok) {
+      throw new Error(`AMD Token Factory /models returned HTTP ${response.status}: ${await response.text().catch(() => '')}`);
     }
+
+    return await response.json();
   }
 
   /**
-   * Mints or reserves ROCm compute tokens for an AI inference session.
+   * Executes chat inference via AMD Token Factory (POST /chat/completions).
    */
-  static async mintTokens(workspaceId: string, requestedTokens: number): Promise<AmdTokenMintResult> {
+  static async createChatCompletion(request: AmdChatCompletionRequest): Promise<AmdChatCompletionResponse> {
     const apiKey = this.getApiKey();
-    const expiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+    const model = request.model || 'amd-rocm-llama-3-8b-instruct';
+
+    if (!apiKey) {
+      const userPrompt = request.messages[request.messages.length - 1]?.content || '';
+      return {
+        id: `amd_chat_fixture_${Date.now()}`,
+        object: 'chat.completion',
+        created: Math.floor(Date.now() / 1000),
+        model,
+        choices: [
+          {
+            index: 0,
+            message: {
+              role: 'assistant',
+              content: `[AMD ROCm Test Fixture] Response for prompt: "${userPrompt.slice(0, 100)}"`,
+            },
+            finish_reason: 'stop',
+          },
+        ],
+        usage: {
+          prompt_tokens: Math.ceil(userPrompt.length / 4),
+          completion_tokens: 15,
+          total_tokens: Math.ceil(userPrompt.length / 4) + 15,
+        },
+        isFixture: true,
+        fixtureNotice: 'TEST_FIXTURE: No RADEON_API_KEY configured; returning explicit test fixture response.',
+      };
+    }
+
+    const response = await fetch(`${this.getBaseUrl()}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model,
+        messages: request.messages,
+        temperature: request.temperature ?? 0.7,
+        max_tokens: request.max_tokens ?? 1024,
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`AMD Token Factory /chat/completions returned HTTP ${response.status}: ${await response.text().catch(() => '')}`);
+    }
+
+    return await response.json();
+  }
+
+  /**
+   * Retrieves usage metrics from AMD Token Factory (GET /usage).
+   */
+  static async getUsage(workspaceId?: string): Promise<AmdUsageResponse> {
+    const apiKey = this.getApiKey();
 
     if (!apiKey) {
       return {
-        success: true,
-        mintedTokens: requestedTokens,
-        remainingTokens: 487_550,
-        tokenId: `amd_tok_sim_${Date.now()}`,
-        expiresAt,
-        telemetry: {
-          engine: 'Radeon Token Factory v2.4',
-          rocmVersion: '6.2.0',
-          accelerator: 'AMD Instinct MI300X (Simulated)',
-        },
+        object: 'usage',
+        total_tokens: 0,
+        prompt_tokens: 0,
+        completion_tokens: 0,
+        workspace_id: workspaceId,
+        isFixture: true,
+        fixtureNotice: 'TEST_FIXTURE: No RADEON_API_KEY configured; zero usage telemetry fixture.',
       };
     }
 
-    try {
-      const response = await fetch(`${this.getBaseUrl()}/mint`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${apiKey}`,
-          'Content-Type': 'application/json',
-          'X-Ralion-Workspace': workspaceId,
-        },
-        body: JSON.stringify({
-          workspaceId,
-          tokens: requestedTokens,
-        }),
-      });
+    const query = workspaceId ? `?workspace_id=${encodeURIComponent(workspaceId)}` : '';
+    const response = await fetch(`${this.getBaseUrl()}/usage${query}`, {
+      method: 'GET',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+    });
 
-      if (!response.ok) {
-        throw new Error(`Token minting failed with status ${response.status}`);
-      }
-
-      const data = await response.json();
-      return {
-        success: true,
-        mintedTokens: data.minted_tokens ?? requestedTokens,
-        remainingTokens: data.remaining_tokens ?? 950_000,
-        tokenId: data.token_id ?? `amd_tok_${Date.now()}`,
-        expiresAt: data.expires_at ?? expiresAt,
-        telemetry: {
-          engine: 'Radeon Token Factory v2.4',
-          rocmVersion: data.rocm_version ?? '6.2.0',
-          accelerator: data.accelerator ?? 'AMD Instinct MI300X',
-        },
-      };
-    } catch {
-      return {
-        success: true,
-        mintedTokens: requestedTokens,
-        remainingTokens: 487_550,
-        tokenId: `amd_tok_fallback_${Date.now()}`,
-        expiresAt,
-        telemetry: {
-          engine: 'Radeon Token Factory (Fallback)',
-          rocmVersion: '6.2.0',
-          accelerator: 'AMD Instinct MI300X',
-        },
-      };
+    if (!response.ok) {
+      throw new Error(`AMD Token Factory /usage returned HTTP ${response.status}: ${await response.text().catch(() => '')}`);
     }
+
+    return await response.json();
   }
 }
