@@ -99,11 +99,143 @@ export async function POST(request: NextRequest) {
 
   try {
     const body = await request.json().catch(() => ({}));
-    const rawPrompt = String(body.prompt || '');
 
-    const messages = Array.isArray(body.messages) && body.messages.length > 0
-      ? body.messages
-      : [{ role: 'user', content: rawPrompt || 'Strategic AMD ROCm infrastructure validation prompt.' }];
+    // Comprehensive validation of client-supplied messages or fallback prompt
+    let messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>;
+    const allowedRoles = ['system', 'user', 'assistant'] as const;
+
+    if (body?.messages !== undefined) {
+      if (!Array.isArray(body.messages) || body.messages.length === 0) {
+        return corsJsonResponse(
+          {
+            success: false,
+            error: 'INVALID_MESSAGES_PAYLOAD',
+            message: 'Client-supplied messages must be a non-empty array.',
+          },
+          { status: 400 },
+          request
+        );
+      }
+
+      if (body.messages.length > 50) {
+        return corsJsonResponse(
+          {
+            success: false,
+            error: 'MAX_MESSAGES_EXCEEDED',
+            message: 'Messages array exceeds maximum limit of 50 turns.',
+          },
+          { status: 400 },
+          request
+        );
+      }
+
+      let totalChars = 0;
+      for (let i = 0; i < body.messages.length; i++) {
+        const msg = body.messages[i];
+        if (!msg || typeof msg !== 'object') {
+          return corsJsonResponse(
+            {
+              success: false,
+              error: 'INVALID_MESSAGE_FORMAT',
+              message: `Message at index ${i} must be an object with role and content.`,
+            },
+            { status: 400 },
+            request
+          );
+        }
+
+        if (!allowedRoles.includes(msg.role)) {
+          return corsJsonResponse(
+            {
+              success: false,
+              error: 'INVALID_ROLE',
+              message: `Invalid role '${msg.role}' at index ${i}. Allowed roles: system, user, assistant.`,
+            },
+            { status: 400 },
+            request
+          );
+        }
+
+        if (typeof msg.content !== 'string' || msg.content.trim().length === 0) {
+          return corsJsonResponse(
+            {
+              success: false,
+              error: 'EMPTY_CONTENT',
+              message: `Message content at index ${i} must be a non-empty string.`,
+            },
+            { status: 400 },
+            request
+          );
+        }
+
+        if (msg.content.length > 4000) {
+          return corsJsonResponse(
+            {
+              success: false,
+              error: 'CONTENT_LENGTH_EXCEEDED',
+              message: `Message content at index ${i} exceeds maximum limit of 4,000 characters.`,
+            },
+            { status: 400 },
+            request
+          );
+        }
+
+        totalChars += msg.content.length;
+      }
+
+      if (totalChars > 16000) {
+        return corsJsonResponse(
+          {
+            success: false,
+            error: 'PAYLOAD_TOO_LARGE',
+            message: `Total messages payload size (${totalChars} chars) exceeds maximum allowable limit of 16,000 characters.`,
+          },
+          { status: 400 },
+          request
+        );
+      }
+
+      messages = body.messages.map((m: any) => ({ role: m.role, content: m.content.trim() }));
+    } else {
+      const rawPrompt = typeof body?.prompt === 'string' ? body.prompt.trim() : '';
+      if (!rawPrompt) {
+        return corsJsonResponse(
+          {
+            success: false,
+            error: 'PROMPT_REQUIRED',
+            message: 'A non-empty prompt or valid messages array is required to run AMD inference.',
+          },
+          { status: 400 },
+          request
+        );
+      }
+
+      if (rawPrompt.length > 4000) {
+        return corsJsonResponse(
+          {
+            success: false,
+            error: 'CONTENT_LENGTH_EXCEEDED',
+            message: 'Prompt exceeds maximum limit of 4,000 characters.',
+          },
+          { status: 400 },
+          request
+        );
+      }
+
+      messages = [{ role: 'user', content: rawPrompt }];
+    }
+
+    if (body?.model && !AmdTokenFactoryService.ALLOWED_MODELS.includes(body.model)) {
+      return corsJsonResponse(
+        {
+          success: false,
+          error: 'MODEL_NOT_FOUND',
+          message: `Model '${body.model}' is unavailable. Available verified AMD models: ${AmdTokenFactoryService.ALLOWED_MODELS.join(', ')}`,
+        },
+        { status: 400 },
+        request
+      );
+    }
 
     const moduleTag: AmdInitiatingModule = ['mari', 'growth', 'creative', 'monitoring_test'].includes(body.module)
       ? body.module
@@ -128,13 +260,18 @@ export async function POST(request: NextRequest) {
       request
     );
   } catch (error: any) {
+    const isRateLimit = error.status === 429 || error.message?.includes('429');
+    const isBadRequest = error.status === 400 ||
+      error.code === 'INVALID_MESSAGES' ||
+      error.message?.includes('messages') ||
+      error.message?.includes('Available verified AMD models');
     return corsJsonResponse(
       {
         success: false,
-        error: error.status === 429 ? 'RATE_LIMITED' : 'CHAT_COMPLETION_ERROR',
+        error: isRateLimit ? 'RATE_LIMITED' : (isBadRequest ? 'BAD_REQUEST' : 'CHAT_COMPLETION_ERROR'),
         message: error.message || 'Failed to execute AMD Token Factory chat completion',
       },
-      { status: error.status === 429 ? 429 : 500 },
+      { status: isRateLimit ? 429 : (isBadRequest ? 400 : 500) },
       request
     );
   }

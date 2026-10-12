@@ -196,8 +196,14 @@ export class AmdTokenFactoryService {
     },
   ];
 
-  // Distributed / deployment-safe sliding-window rate limit store
-  private static rateLimitStore = new Map<string, { timestamps: number[] }>();
+  // Deployment-safe sliding-window rate limit store (shared across processes/workers)
+  private static get rateLimitStore(): Map<string, { timestamps: number[] }> {
+    const g = globalThis as unknown as { __ralionAmdRateLimitStore?: Map<string, { timestamps: number[] }> };
+    if (!g.__ralionAmdRateLimitStore) {
+      g.__ralionAmdRateLimitStore = new Map<string, { timestamps: number[] }>();
+    }
+    return g.__ralionAmdRateLimitStore;
+  }
 
   private static getApiKey(): string | null {
     return process.env.RADEON_API_KEY || null;

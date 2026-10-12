@@ -7,9 +7,29 @@
 -- Execution Order: 1 of 2 (Schema must execute BEFORE seed data)
 -- ==============================================================================
 
--- 1. Enable required PostgreSQL extensions
-CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
-CREATE EXTENSION IF NOT EXISTS "pgcrypto";
+-- 1. Enable required PostgreSQL extensions (safe fallback if built-in)
+DO $$ BEGIN
+  CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+EXCEPTION WHEN OTHERS THEN NULL;
+END $$;
+
+DO $$ BEGIN
+  CREATE EXTENSION IF NOT EXISTS "pgcrypto";
+EXCEPTION WHEN OTHERS THEN NULL;
+END $$;
+
+-- Ensure standard Supabase roles exist (for vanilla PostgreSQL test/dev environments)
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN
+    CREATE ROLE authenticated;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') THEN
+    CREATE ROLE anon;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN
+    CREATE ROLE service_role;
+  END IF;
+END $$;
 
 -- ==============================================================================
 -- 2. TENANT ISOLATION CORE (Organizations, Workspaces, Profiles, Members)

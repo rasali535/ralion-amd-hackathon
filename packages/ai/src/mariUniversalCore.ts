@@ -2158,7 +2158,7 @@ export class MariUniversalCore {
       detectedIntent.includes('MARKETING');
     const initiatingModule: 'mari' | 'growth' = isGrowthModule ? 'growth' : 'mari';
 
-    const useAmdPrimary = process.env.PREFER_AMD_INFERENCE === 'true' ||
+    const useAmdPrimary = process.env.PREFER_AMD_INFERENCE !== 'false' ||
       Boolean(process.env.RADEON_API_KEY) ||
       request.preferredProvider === 'amd';
 
