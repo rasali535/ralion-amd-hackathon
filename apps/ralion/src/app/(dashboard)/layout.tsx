@@ -70,7 +70,8 @@ export default function DashboardLayout({
       const approvedRoutes = new Set([
         '/dashboard', '/crm', '/customers', '/leads', '/growth', '/creatives',
         '/calendar', '/tasks', '/documents', '/workflows', '/reports', '/billing',
-        '/marketplace', '/settings', '/workspace', '/mari-ai',
+        '/marketplace', '/settings', '/workspace', '/mari-ai', '/developer',
+        '/amd-monitoring',
       ]);
       if (!approvedRoutes.has(route)) return;
 

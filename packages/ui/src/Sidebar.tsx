@@ -31,7 +31,8 @@ import {
   LogOut,
   PanelLeftClose,
   PanelLeftOpen,
-  Briefcase
+  Briefcase,
+  Cpu
 } from 'lucide-react';
 import { cn } from './utils';
 import { Badge } from './Badge';
@@ -113,6 +114,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     { id: 'integrations', label: 'Integrations Hub', href: '/ralion/settings/integrations', icon: <Globe className="w-4 h-4 text-indigo-400" />, badge: 'Meta/OAuth' },
     { id: 'marketplace', label: 'Marketplace & AI', href: '/ralion/marketplace', icon: <Store className="w-4 h-4 text-zinc-400" />, badge: 'Coming Soon', isLocked: true },
     { id: 'developer', label: 'Developer Platform', href: '/ralion/developer', icon: <Code className="w-4 h-4 text-indigo-400" />, badge: 'Live', badgeVariant: 'purple' },
+    { id: 'amd-monitoring', label: 'AMD AI Centre', href: '/ralion/amd-monitoring', icon: <Cpu className="w-4 h-4 text-rose-400" />, badge: 'ROCm', badgeVariant: 'purple' },
   ];
 
   // 3. INDUSTRY SOLUTIONS Items (Locked with Coming Soon for Early Access)
