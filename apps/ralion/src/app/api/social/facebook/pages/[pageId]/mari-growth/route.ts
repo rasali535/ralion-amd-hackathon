@@ -422,6 +422,7 @@ export async function POST(
           entityId: resolvedPageId,
         },
         requestId: `fb_growth_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+        module: 'growth',
       });
 
       const genericUnavailable = /reasoning engine is temporarily unavailable/i.test(String(result.answer || ''));

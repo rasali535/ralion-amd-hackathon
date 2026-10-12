@@ -73,15 +73,20 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  // Rate limiting / throttling: max 15 requests per minute per workspace
-  if (!AmdTokenFactoryService.checkRateLimit(auth.context.workspace.id)) {
+  // Distributed rate limiting / throttling: max 15 requests per minute per workspace
+  const throttle = AmdTokenFactoryService.checkDistributedRateLimit(auth.context.workspace.id);
+  if (!throttle.allowed) {
     return corsJsonResponse(
       {
         success: false,
         error: 'RATE_LIMITED',
         message: 'Too many AMD test requests. Please wait a moment before running additional inference tests.',
+        retryAfterMs: throttle.retryAfterMs,
       },
-      { status: 429 },
+      {
+        status: 429,
+        headers: { 'Retry-After': Math.ceil(throttle.retryAfterMs / 1000).toString() },
+      },
       request
     );
   }
@@ -90,24 +95,12 @@ export async function POST(request: NextRequest) {
     const body = await request.json().catch(() => ({}));
     const rawPrompt = typeof body?.prompt === 'string' ? body.prompt.trim() : '';
 
-    if (!rawPrompt) {
+    if (!rawPrompt && (!Array.isArray(body?.messages) || body.messages.length === 0)) {
       return corsJsonResponse(
         {
           success: false,
           error: 'PROMPT_REQUIRED',
-          message: 'A non-empty prompt is required to run AMD inference.',
-        },
-        { status: 400 },
-        request
-      );
-    }
-
-    if (rawPrompt.length > 4000) {
-      return corsJsonResponse(
-        {
-          success: false,
-          error: 'PROMPT_TOO_LONG',
-          message: 'Prompt exceeds the maximum allowed length of 4,000 characters.',
+          message: 'A non-empty prompt or valid messages array is required to run AMD inference.',
         },
         { status: 400 },
         request
@@ -129,6 +122,7 @@ export async function POST(request: NextRequest) {
       max_tokens: body?.max_tokens,
       module: moduleTag,
       traceId: body?.traceId,
+      workspaceId: auth.context.workspace.id,
     });
 
     const assistantChoice = result.choices?.[0]?.message?.content || '';

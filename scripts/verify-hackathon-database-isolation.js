@@ -266,9 +266,8 @@ runTest('SECURITY DEFINER functions enforce safe search_path and execution privi
   );
 });
 
-runTest('Synthetic seed contains valid Supabase Auth user integration and demo fixtures', () => {
+runTest('Synthetic seed contains valid RFC 4122 tenant identifiers and demo fixtures', () => {
   const seedSql = fs.readFileSync(seedMigrationPath, 'utf-8');
-  assert.ok(seedSql.includes('auth.users'), 'Must contain conditional seed into auth.users');
   assert.ok(seedSql.includes('a0000000-0000-0000-0000-000000000001'), 'Must seed primary demo user UUID');
   assert.ok(seedSql.includes('c0000000-0000-0000-0000-000000000001'), 'Must seed primary demo workspace UUID');
   assert.ok(seedSql.includes('Kalahari & Okavango Wilderness Expeditions'), 'Must seed Botswana safari company business profile');
@@ -279,7 +278,7 @@ runTest('Synthetic seed contains valid Supabase Auth user integration and demo f
   assert.ok(seedSql.includes('tenant_credit_wallets'), 'Must seed synthetic credit wallets');
 });
 
-runTest('SQL migrations contain ZERO hardcoded passwords and use unguessable hashes', () => {
+runTest('SQL migrations contain ZERO hardcoded passwords and ZERO direct auth.users credential insertions', () => {
   const migrationsDir = path.join(__dirname, '../supabase/migrations');
   const files = fs.readdirSync(migrationsDir).filter(f => f.endsWith('.sql'));
 
@@ -289,12 +288,17 @@ runTest('SQL migrations contain ZERO hardcoded passwords and use unguessable has
       !content.includes('AmdHackathon2026!'),
       `Migration ${file} must NOT contain hardcoded password AmdHackathon2026!`
     );
+    assert.ok(
+      !content.includes('INSERT INTO auth.users'),
+      `Migration ${file} must NOT contain direct INSERT INTO auth.users`
+    );
   }
 
-  const seedSql = fs.readFileSync(seedMigrationPath, 'utf-8');
+  const seedPath = path.join(__dirname, '../supabase/seed.sql');
+  const seedContent = fs.readFileSync(seedPath, 'utf-8');
   assert.ok(
-    seedSql.includes('gen_random_uuid()::text'),
-    'Synthetic auth.users seed must use unguessable random salt/hash'
+    !seedContent.includes('INSERT INTO auth.users'),
+    'supabase/seed.sql must NOT contain direct INSERT INTO auth.users'
   );
 
   const provisionScript = path.join(__dirname, 'provision-demo-users.js');

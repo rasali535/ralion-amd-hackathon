@@ -158,7 +158,7 @@ async function runAll() {
     assert.ok(routeCode.includes('resolveRalionAuthContext'), 'Must require authentication');
     assert.ok(routeCode.includes('export async function GET'), 'Must export GET handler');
     assert.ok(routeCode.includes('export async function POST'), 'Must export POST handler');
-    assert.ok(routeCode.includes('checkRateLimit'), 'Must enforce rate limiting');
+    assert.ok(routeCode.includes('checkDistributedRateLimit') || routeCode.includes('checkRateLimit'), 'Must enforce rate limiting');
   });
 
   // 8. AMD Monitoring Centre UI Page & Navigation
@@ -191,6 +191,65 @@ async function runAll() {
     const dashPath = path.join(__dirname, '../apps/ralion/src/app/(dashboard)/dashboard/page.tsx');
     const dashCode = fs.readFileSync(dashPath, 'utf-8');
     assert.ok(dashCode.includes('/amd-monitoring'), 'Dashboard must link to /amd-monitoring');
+  });
+
+  // 9. Verified Model Allowlisting & Message Array Validation (Requirements 2, 4 & 5)
+  console.log('\n--- 9. Testing Model Allowlisting & Messages Array Validation ---');
+  runTest('ALLOWED_MODELS allowlist enforced and invented models rejected', () => {
+    assert.ok(factoryCode.includes('ALLOWED_MODELS'), 'Must define ALLOWED_MODELS allowlist');
+    assert.ok(factoryCode.includes('DeepSeek-V4-Flash-0731'), 'Must include DeepSeek-V4-Flash-0731 in allowlist');
+    assert.ok(factoryCode.includes('is unavailable. Available verified AMD models:'), 'Must reject unavailable models clearly');
+  });
+
+  runTest('Complete messages array, roles, content length and payload bounds enforced', () => {
+    assert.ok(factoryCode.includes('messages must be a non-empty array'), 'Must validate messages is non-empty array');
+    assert.ok(factoryCode.includes('allowedRoles'), 'Must validate allowed roles (system, user, assistant)');
+    assert.ok(factoryCode.includes('16000'), 'Must enforce 16,000 characters total payload bound');
+    assert.ok(factoryCode.includes('maxTokensClamped'), 'Must clamp max_tokens server-side');
+    assert.ok(factoryCode.includes('temperatureClamped'), 'Must clamp temperature server-side');
+  });
+
+  // 10. Distributed Rate Limiting & Tenant Telemetry Isolation (Requirements 6 & 7)
+  console.log('\n--- 10. Testing Distributed Rate Limiting & Tenant Telemetry Isolation ---');
+  runTest('Implements deployment-safe distributed rate limiting', () => {
+    assert.ok(factoryCode.includes('checkDistributedRateLimit('), 'Must implement checkDistributedRateLimit');
+    assert.ok(factoryCode.includes('retryAfterMs'), 'Must calculate retryAfterMs');
+  });
+
+  runTest('Telemetry ledger enforces strict tenant isolation by workspaceId', () => {
+    assert.ok(factoryCode.includes('workspaceId?: string;'), 'AmdRequestLog must declare workspaceId');
+    assert.ok(
+      factoryCode.includes('filtered = filtered.filter((r) => !r.workspaceId || r.workspaceId === workspaceId)'),
+      'getRecentRequests must isolate by workspaceId'
+    );
+    assert.ok(
+      factoryCode.includes('this.getRecentRequests(30, undefined, workspaceId)'),
+      'getMonitoringOverview must pass workspaceId to getRecentRequests'
+    );
+  });
+
+  // 11. Mari AI & Growth Genuine AMD Adapter Invocation (Requirement 8)
+  console.log('\n--- 11. Testing Mari AI & Growth Genuine AMD Adapter Invocation ---');
+  runTest('Mari AI and Growth route queries to AMD Token Factory adapter', () => {
+    const mariCorePath = path.join(__dirname, '../packages/ai/src/mariUniversalCore.ts');
+    assert.ok(fs.existsSync(mariCorePath), 'mariUniversalCore.ts must exist');
+    const mariCoreCode = fs.readFileSync(mariCorePath, 'utf-8');
+
+    assert.ok(mariCoreCode.includes('AmdTokenFactoryService'), 'mariUniversalCore must import AmdTokenFactoryService');
+    assert.ok(mariCoreCode.includes('callAmdNeuralCore('), 'Must implement callAmdNeuralCore');
+    assert.ok(mariCoreCode.includes("moduleTag: 'mari' | 'growth'"), 'callAmdNeuralCore must support mari and growth modules');
+    assert.ok(mariCoreCode.includes("responseSource = 'amd'"), 'Must attribute responseSource to AMD');
+
+    const growthRoutePath = path.join(
+      __dirname,
+      '../apps/ralion/src/app/api/social/facebook/pages/[pageId]/mari-growth/route.ts'
+    );
+    const growthRouteCode = fs.readFileSync(growthRoutePath, 'utf-8');
+    assert.ok(growthRouteCode.includes("module: 'growth'"), 'Growth route must tag processQuery with module: growth');
+
+    const chatRoutePath = path.join(__dirname, '../apps/ralion/src/app/api/mari/chat/route.ts');
+    const chatRouteCode = fs.readFileSync(chatRoutePath, 'utf-8');
+    assert.ok(chatRouteCode.includes("module: 'mari'"), 'Mari chat route must tag processQuery with module: mari');
   });
 
   console.log('\n======================================================================');

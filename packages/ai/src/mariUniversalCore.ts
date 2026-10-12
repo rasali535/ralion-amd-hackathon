@@ -36,6 +36,7 @@ import { TenantCreditsService, CREDIT_COSTS } from './tenantCredits.service';
 import { CreativeOrchestrator } from './creativeOrchestrator.service';
 import { CreativeAssetService } from './creativeAsset.service';
 import { MariCreativeIntelligenceService } from './mariCreativeIntelligence.service';
+import { AmdTokenFactoryService } from './amdTokenFactory.service';
 
 const MARI_CLASSIFIER_MODEL = process.env.MARI_GEMINI_CLASSIFIER_MODEL || 'gemini-3.6-flash';
 const MARI_RESPONSE_MODEL = process.env.MARI_GEMINI_MODEL || process.env.GEMINI_MODEL || 'gemini-3.6-flash';
@@ -142,6 +143,8 @@ export interface MariQueryRequest {
   localOverrides?: any;
   requestId?: string;
   forceLocalOnly?: boolean;
+  module?: 'mari' | 'growth' | 'creative' | 'monitoring_test';
+  preferredProvider?: 'amd' | 'gemini' | 'local';
 }
 
 export interface MariQueryResponse {
@@ -162,7 +165,7 @@ export interface MariQueryResponse {
   actualModelUsed?: string | null;
   modelsAttempted?: string[];
   modelFailureCodes?: Record<string, string>;
-  responseSource: 'gemini' | 'local_grounded';
+  responseSource: 'gemini' | 'amd' | 'local_grounded';
   fallbackUsed: boolean;
   fallbackReason: string | null;
   buildVersion: string;
@@ -1158,6 +1161,94 @@ SERVER CONTEXT RULES:
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// 2.8 AUTHORITATIVE AMD TOKEN FACTORY REASONING CORE (Mari AI & Growth)
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function callAmdNeuralCore(
+  cleanUserPrompt: string,
+  context: BusinessContext | null,
+  conversationHistory: ChatHistoryTurn[],
+  semanticDecision: SemanticDecision,
+  companyName: string,
+  authoritativeContext?: string,
+  moduleTag: 'mari' | 'growth' = 'mari',
+  workspaceId?: string
+): Promise<{
+  text: string;
+  usage: MariTokenUsage;
+  model: string;
+  modelsAttempted: string[];
+  modelErrors: Record<string, string>;
+  isRealAmdInference?: boolean;
+} | null> {
+  const modelsAttempted: string[] = [AmdTokenFactoryService.DEFAULT_MODEL];
+  const modelErrors: Record<string, string> = {};
+
+  try {
+    const baseSystemInstruction = composeSelectiveSystemPrompt(
+      context,
+      semanticDecision.requestedSources,
+      companyName
+    );
+    const serverDerivedContext = authoritativeContext?.trim();
+    const systemInstruction = serverDerivedContext
+      ? `${baseSystemInstruction}\n\nAUTHORITATIVE SERVER-DERIVED BUSINESS CONTEXT:\n${serverDerivedContext}`
+      : baseSystemInstruction;
+
+    const messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = [
+      { role: 'system', content: systemInstruction.slice(0, 3900) },
+    ];
+
+    if (conversationHistory.length > 0) {
+      for (const turn of conversationHistory.slice(-6)) {
+        messages.push({
+          role: turn.role === 'model' ? 'assistant' : 'user',
+          content: turn.text.slice(0, 2000),
+        });
+      }
+    }
+
+    messages.push({
+      role: 'user',
+      content: cleanUserPrompt.slice(0, 3900),
+    });
+
+    const completion = await AmdTokenFactoryService.createChatCompletion({
+      model: AmdTokenFactoryService.DEFAULT_MODEL,
+      messages,
+      temperature: 0.7,
+      max_tokens: 1024,
+      module: moduleTag,
+      workspaceId: workspaceId || 'c0000000-0000-0000-0000-000000000001',
+    });
+
+    const candidateText = completion.choices?.[0]?.message?.content || '';
+    if (!candidateText || candidateText.trim().length === 0) {
+      modelErrors[AmdTokenFactoryService.DEFAULT_MODEL] = 'EMPTY_COMPLETION';
+      return null;
+    }
+
+    const cleanText = sanitizeMariModelOutput(candidateText);
+    return {
+      text: cleanText,
+      usage: {
+        promptTokens: completion.usage.prompt_tokens,
+        completionTokens: completion.usage.completion_tokens,
+        totalTokens: completion.usage.total_tokens,
+      },
+      model: completion.model,
+      modelsAttempted,
+      modelErrors,
+      isRealAmdInference: completion.isRealAmdInference,
+    };
+  } catch (err: any) {
+    modelErrors[AmdTokenFactoryService.DEFAULT_MODEL] = err.message || 'AMD_INFERENCE_ERROR';
+    console.warn(`[MariCore] AMD Token Factory reasoning note:`, err.message);
+    return null;
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // 3. SAFE LOCAL STRATEGIC & GROUNDED FALLBACK ENGINE
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -2054,17 +2145,64 @@ export class MariUniversalCore {
       }
     } catch {}
 
-    // 5. Invoke Gemini Reasoning with Clean User Prompt & Selected Context
+    // 5. Invoke Authoritative Reasoning (AMD Token Factory / Gemini)
     let answerText = '';
     let modelUsed = 'Mari Neural Engine';
-    let responseSource: 'gemini' | 'local_grounded' = 'gemini';
+    let responseSource: 'gemini' | 'amd' | 'local_grounded' = 'gemini';
     let usage: MariTokenUsage = { ...classificationTokens };
     let suggestedActions: MariActionPayload[] = [];
 
-    responseModelAttempted = MARI_RESPONSE_MODEL;
-    modelAttempted = MARI_RESPONSE_MODEL;
+    const isGrowthModule = request.module === 'growth' ||
+      detectedIntent === 'GROWTH_STRATEGY' ||
+      detectedIntent.includes('CAMPAIGN') ||
+      detectedIntent.includes('MARKETING');
+    const initiatingModule: 'mari' | 'growth' = isGrowthModule ? 'growth' : 'mari';
 
-    if (!request.forceLocalOnly) {
+    const useAmdPrimary = process.env.PREFER_AMD_INFERENCE === 'true' ||
+      Boolean(process.env.RADEON_API_KEY) ||
+      request.preferredProvider === 'amd';
+
+    if (!request.forceLocalOnly && useAmdPrimary) {
+      responseModelAttempted = AmdTokenFactoryService.DEFAULT_MODEL;
+      modelAttempted = AmdTokenFactoryService.DEFAULT_MODEL;
+
+      const amdResult = await callAmdNeuralCore(
+        cleanOriginalPrompt,
+        context,
+        conversationHistory,
+        semanticDecision,
+        resolvedCompanyName,
+        contextualPrompt,
+        initiatingModule,
+        workspaceId
+      );
+
+      if (amdResult && amdResult.text) {
+        if (amdResult.modelsAttempted) {
+          for (const m of amdResult.modelsAttempted) {
+            if (!allModelsAttempted.includes(m)) allModelsAttempted.push(m);
+          }
+        }
+        answerText = amdResult.text;
+        usage = {
+          promptTokens: amdResult.usage.promptTokens + classificationTokens.promptTokens,
+          completionTokens: amdResult.usage.completionTokens + classificationTokens.completionTokens,
+          totalTokens: amdResult.usage.totalTokens + classificationTokens.totalTokens,
+        };
+        actualModelUsed = amdResult.model;
+        modelUsed = `Mari Neural Engine (AMD ${amdResult.model})`;
+        responseModelSucceeded = true;
+        responseSource = 'amd' as any;
+        modelSucceeded = true;
+        fallbackUsed = false;
+        fallbackReason = null;
+      }
+    }
+
+    if (!request.forceLocalOnly && !answerText) {
+      responseModelAttempted = MARI_RESPONSE_MODEL;
+      modelAttempted = MARI_RESPONSE_MODEL;
+
       const geminiResult = await callGeminiNeuralCore(
         cleanOriginalPrompt,
         context,
@@ -2074,7 +2212,7 @@ export class MariUniversalCore {
         contextualPrompt
       );
 
-      if (geminiResult) {
+      if (geminiResult && geminiResult.text) {
         if (geminiResult.modelsAttempted) {
           for (const m of geminiResult.modelsAttempted) {
             if (!allModelsAttempted.includes(m)) allModelsAttempted.push(m);
@@ -2084,54 +2222,61 @@ export class MariUniversalCore {
           Object.assign(modelFailureCodes, geminiResult.modelErrors);
         }
 
-        if (geminiResult.text) {
-          answerText = geminiResult.text;
+        answerText = geminiResult.text;
+        usage = {
+          promptTokens: geminiResult.usage.promptTokens + classificationTokens.promptTokens,
+          completionTokens: geminiResult.usage.completionTokens + classificationTokens.completionTokens,
+          totalTokens: geminiResult.usage.totalTokens + classificationTokens.totalTokens,
+        };
+        actualModelUsed = geminiResult.model;
+        modelUsed = `Mari Neural Engine (${geminiResult.model})`;
+        modelAttempted = geminiResult.modelsAttempted[0] || MARI_RESPONSE_MODEL;
+        responseModelAttempted = geminiResult.modelsAttempted[0] || MARI_RESPONSE_MODEL;
+        responseModelSucceeded = true;
+        responseSource = 'gemini';
+        modelSucceeded = true;
+        fallbackUsed = false;
+        fallbackReason = null;
+      } else {
+        // Fallback to AMD Token Factory before local static fallback
+        const amdFallback = await callAmdNeuralCore(
+          cleanOriginalPrompt,
+          context,
+          conversationHistory,
+          semanticDecision,
+          resolvedCompanyName,
+          contextualPrompt,
+          initiatingModule,
+          workspaceId
+        );
+
+        if (amdFallback && amdFallback.text) {
+          if (amdFallback.modelsAttempted) {
+            for (const m of amdFallback.modelsAttempted) {
+              if (!allModelsAttempted.includes(m)) allModelsAttempted.push(m);
+            }
+          }
+          answerText = amdFallback.text;
           usage = {
-            promptTokens: geminiResult.usage.promptTokens + classificationTokens.promptTokens,
-            completionTokens: geminiResult.usage.completionTokens + classificationTokens.completionTokens,
-            totalTokens: geminiResult.usage.totalTokens + classificationTokens.totalTokens,
+            promptTokens: amdFallback.usage.promptTokens + classificationTokens.promptTokens,
+            completionTokens: amdFallback.usage.completionTokens + classificationTokens.completionTokens,
+            totalTokens: amdFallback.usage.totalTokens + classificationTokens.totalTokens,
           };
-          actualModelUsed = geminiResult.model;
-          modelUsed = `Mari Neural Engine (${geminiResult.model})`;
-          modelAttempted = geminiResult.modelsAttempted[0] || MARI_RESPONSE_MODEL;
-          responseModelAttempted = geminiResult.modelsAttempted[0] || MARI_RESPONSE_MODEL;
+          actualModelUsed = amdFallback.model;
+          modelUsed = `Mari Neural Engine (AMD ${amdFallback.model})`;
           responseModelSucceeded = true;
-          responseSource = 'gemini';
+          responseSource = 'amd' as any;
           modelSucceeded = true;
           fallbackUsed = false;
           fallbackReason = null;
-
-          // Derive clean suggested actions for UI navigation
-          if (detectedIntent === 'WEBSITE_KNOWLEDGE') {
-            suggestedActions.push({ type: 'NAVIGATE', label: 'Sync Website', payload: { route: '/settings' } });
-          } else if (detectedIntent === 'FACEBOOK_CONNECTION_STATUS') {
-            suggestedActions.push({ type: 'NAVIGATE', label: 'Open Growth Studio', payload: { route: '/growth' } });
-          } else if (detectedIntent === 'INSTAGRAM_CONNECTION_STATUS') {
-            suggestedActions.push({ type: 'NAVIGATE', label: 'Open Growth Studio', payload: { route: '/growth?tab=channels' } });
-          } else if (detectedIntent === 'CREATIVE_STUDIO' || detectedIntent === 'CREATE_FLYER') {
-            suggestedActions.push(
-              { type: 'NAVIGATE', label: 'Open Creative Studio', payload: { route: '/growth?tab=creatives' } },
-              { type: 'NAVIGATE', label: 'Create Visual in Studio', payload: { route: `/growth?tab=creatives&mode=create&prompt=${encodeURIComponent(cleanOriginalPrompt)}` } }
-            );
-          } else if (detectedIntent === 'WEEKLY_FOCUS' || detectedIntent === 'COMPOUND_QUERY' || detectedIntent === 'BUSINESS_IDENTITY' || detectedIntent === 'BUSINESS_SYNTHESIS') {
-            suggestedActions.push(
-              { type: 'NAVIGATE', label: 'Open Growth Studio', payload: { route: '/growth' } },
-              { type: 'NAVIGATE', label: 'View CRM Pipeline', payload: { route: '/crm' } }
-            );
-          }
         } else {
           responseModelSucceeded = false;
           modelSucceeded = false;
           fallbackUsed = true;
           fallbackReason = geminiResult?.error || 'GEMINI_UNAVAILABLE';
         }
-      } else {
-        responseModelSucceeded = false;
-        modelSucceeded = false;
-        fallbackUsed = true;
-        fallbackReason = 'GEMINI_CALL_FAILED';
       }
-    } else {
+    } else if (request.forceLocalOnly) {
       modelSucceeded = false;
       responseModelSucceeded = false;
       fallbackUsed = true;

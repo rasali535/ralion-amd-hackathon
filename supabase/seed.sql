@@ -23,55 +23,10 @@ BEGIN
   END IF;
 END $$;
 
--- 2. Supabase Auth Compatible Synthetic Users (auth.users)
--- SECURITY COMPLIANT: Passwords use unguessable cryptographic salts so no hardcoded or public credentials exist.
--- Supported interactive provisioning is handled via scripts/provision-demo-users.js or Supabase Auth Admin API.
-DO $$
-BEGIN
-  IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'auth' AND table_name = 'users') THEN
-    INSERT INTO auth.users (
-      instance_id,
-      id,
-      aud,
-      role,
-      email,
-      encrypted_password,
-      email_confirmed_at,
-      raw_app_meta_data,
-      raw_user_meta_data,
-      created_at,
-      updated_at
-    )
-    VALUES
-      (
-        '00000000-0000-0000-0000-000000000000',
-        'a0000000-0000-0000-0000-000000000001',
-        'authenticated',
-        'authenticated',
-        'demo@ralion.ai',
-        crypt(gen_random_uuid()::text, gen_salt('bf')),
-        NOW(),
-        '{"provider":"email","providers":["email"],"role":"PLATFORM_ADMIN"}'::jsonb,
-        '{"full_name":"AMD Hackathon Developer"}'::jsonb,
-        NOW(),
-        NOW()
-      ),
-      (
-        '00000000-0000-0000-0000-000000000000',
-        'a0000000-0000-0000-0000-000000000002',
-        'authenticated',
-        'authenticated',
-        'developer@amd-hackathon.local',
-        crypt(gen_random_uuid()::text, gen_salt('bf')),
-        NOW(),
-        '{"provider":"email","providers":["email"],"role":"ADMINISTRATOR"}'::jsonb,
-        '{"full_name":"ROCm Systems Engineer"}'::jsonb,
-        NOW(),
-        NOW()
-      )
-    ON CONFLICT (id) DO NOTHING;
-  END IF;
-END $$;
+-- 2. Supabase Auth User Provisioning
+-- SECURITY ENFORCEMENT: Direct credential insertion into auth.users is removed to eliminate credential exposure in SQL seeds.
+-- Demonstration and administrative users are provisioned exclusively through supported Supabase Auth mechanisms
+-- (e.g., scripts/provision-demo-users.js using supabase.auth.admin.createUser).
 
 -- 3. Synthetic Organizations
 INSERT INTO public.organizations (id, name, slug, tier, created_at, updated_at)

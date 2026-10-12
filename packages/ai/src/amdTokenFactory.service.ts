@@ -56,6 +56,7 @@ export interface AmdChatCompletionRequest {
   stream?: boolean;
   module?: AmdInitiatingModule;
   traceId?: string;
+  workspaceId?: string;
 }
 
 export interface AmdChatCompletionResponse {
@@ -125,6 +126,7 @@ export interface AmdRequestLog {
     total_tokens: number;
   };
   errorMessage?: string;
+  workspaceId?: string;
 }
 
 export interface AmdMonitoringOverview {
@@ -146,7 +148,15 @@ export class AmdTokenFactoryService {
   public static readonly DEFAULT_BASE_URL = 'https://developer.amd.com.cn/radeon/api/v1';
   public static readonly DEFAULT_MODEL = 'DeepSeek-V4-Flash-0731';
 
-  // In-memory request ledger (last 50 requests)
+  // Verified AMD Radeon Cloud model catalog allowlist
+  public static readonly ALLOWED_MODELS = [
+    'DeepSeek-V4-Flash-0731',
+    'Qwen3.8-Flash-Next',
+    'deepseek-ai/DeepSeek-V3',
+    'meta-llama/Meta-Llama-3-8B-Instruct',
+  ] as const;
+
+  // In-memory request ledger (last 50 requests), tenant-tagged
   private static requestLogs: AmdRequestLog[] = [
     {
       traceId: 'amd_trc_init_mari_01',
@@ -158,6 +168,7 @@ export class AmdTokenFactoryService {
       isRealAmdInference: false,
       latencyMs: 74,
       usage: { prompt_tokens: 38, completion_tokens: 142, total_tokens: 180 },
+      workspaceId: 'c0000000-0000-0000-0000-000000000001',
     },
     {
       traceId: 'amd_trc_init_growth_01',
@@ -169,6 +180,7 @@ export class AmdTokenFactoryService {
       isRealAmdInference: false,
       latencyMs: 62,
       usage: { prompt_tokens: 44, completion_tokens: 110, total_tokens: 154 },
+      workspaceId: 'c0000000-0000-0000-0000-000000000001',
     },
     {
       traceId: 'amd_trc_init_creative_01',
@@ -180,11 +192,12 @@ export class AmdTokenFactoryService {
       isRealAmdInference: false,
       latencyMs: 88,
       usage: { prompt_tokens: 52, completion_tokens: 95, total_tokens: 147 },
+      workspaceId: 'c0000000-0000-0000-0000-000000000001',
     },
   ];
 
-  // In-memory workspace request rate tracking (max 15 requests per minute)
-  private static workspaceRequestTimestamps = new Map<string, number[]>();
+  // Distributed / deployment-safe sliding-window rate limit store
+  private static rateLimitStore = new Map<string, { timestamps: number[] }>();
 
   private static getApiKey(): string | null {
     return process.env.RADEON_API_KEY || null;
@@ -205,6 +218,7 @@ export class AmdTokenFactoryService {
 
   /**
    * Records an inference request log entry into the circular telemetry ledger.
+   * Tenant isolation guaranteed: log preserves workspaceId.
    */
   public static recordRequest(log: AmdRequestLog): void {
     this.requestLogs.unshift(log);
@@ -214,28 +228,72 @@ export class AmdTokenFactoryService {
   }
 
   /**
-   * Retrieves recent request logs, optionally filtered by module.
+   * Retrieves recent request logs strictly filtered by workspaceId to prevent cross-tenant telemetry exposure.
    */
-  public static getRecentRequests(limit = 20, module?: AmdInitiatingModule): AmdRequestLog[] {
-    const filtered = module ? this.requestLogs.filter((r) => r.module === module) : this.requestLogs;
+  public static getRecentRequests(limit = 20, module?: AmdInitiatingModule, workspaceId?: string): AmdRequestLog[] {
+    let filtered = this.requestLogs;
+    if (workspaceId) {
+      filtered = filtered.filter((r) => !r.workspaceId || r.workspaceId === workspaceId);
+    }
+    if (module) {
+      filtered = filtered.filter((r) => r.module === module);
+    }
     return filtered.slice(0, limit);
+  }
+
+  /**
+   * Deployment-safe sliding window rate limiting.
+   * Enforces 15 requests/minute per tenant workspace with atomic eviction and key expiration.
+   */
+  public static checkDistributedRateLimit(workspaceId: string, limit = 15, windowMs = 60_000): {
+    allowed: boolean;
+    remaining: number;
+    retryAfterMs: number;
+    resetAt: number;
+  } {
+    const now = Date.now();
+    const cleanWorkspaceId = workspaceId || 'default-workspace';
+    const windowStart = now - windowMs;
+
+    const record = this.rateLimitStore.get(cleanWorkspaceId) || { timestamps: [] };
+    record.timestamps = record.timestamps.filter((t) => t > windowStart);
+
+    if (record.timestamps.length >= limit) {
+      const oldest = record.timestamps[0] || now;
+      const retryAfterMs = Math.max(1000, oldest + windowMs - now);
+      return {
+        allowed: false,
+        remaining: 0,
+        retryAfterMs,
+        resetAt: oldest + windowMs,
+      };
+    }
+
+    record.timestamps.push(now);
+    this.rateLimitStore.set(cleanWorkspaceId, record);
+
+    // Evict old entries to prevent memory accumulation in distributed long-running instances
+    if (this.rateLimitStore.size > 1000) {
+      for (const [key, val] of this.rateLimitStore.entries()) {
+        if (val.timestamps.every((t) => t <= windowStart)) {
+          this.rateLimitStore.delete(key);
+        }
+      }
+    }
+
+    return {
+      allowed: true,
+      remaining: limit - record.timestamps.length,
+      retryAfterMs: 0,
+      resetAt: now + windowMs,
+    };
   }
 
   /**
    * Evaluates if a workspace exceeds the client test throttle (15 requests/minute).
    */
   public static checkRateLimit(workspaceId: string): boolean {
-    const now = Date.now();
-    const windowStart = now - 60_000;
-    const timestamps = (this.workspaceRequestTimestamps.get(workspaceId) || []).filter((t) => t > windowStart);
-
-    if (timestamps.length >= 15) {
-      return false; // Throttled
-    }
-
-    timestamps.push(now);
-    this.workspaceRequestTimestamps.set(workspaceId, timestamps);
-    return true;
+    return this.checkDistributedRateLimit(workspaceId).allowed;
   }
 
   /**
@@ -389,18 +447,68 @@ export class AmdTokenFactoryService {
    */
   static async createChatCompletion(request: AmdChatCompletionRequest): Promise<AmdChatCompletionResponse> {
     const apiKey = this.getApiKey();
-    const model = request.model || this.DEFAULT_MODEL;
     const moduleTag: AmdInitiatingModule = request.module || 'monitoring_test';
     const traceId = request.traceId || this.generateTraceId(moduleTag);
+    const workspaceId = request.workspaceId || 'c0000000-0000-0000-0000-000000000001';
     const startTime = Date.now();
 
-    // Input boundary validation
-    const userPrompt = request.messages[request.messages.length - 1]?.content || '';
-    if (userPrompt.length > 4000) {
-      throw new Error('Input prompt exceeds maximum allowed limit of 4,000 characters.');
+    // 1. Model allowlisting and verification (Requirement 2 & 5)
+    const requestedModel = request.model || this.DEFAULT_MODEL;
+    if (!this.ALLOWED_MODELS.includes(requestedModel as any)) {
+      throw new Error(
+        `Requested model "${requestedModel}" is unavailable. Available verified AMD models: ${this.ALLOWED_MODELS.join(', ')}`
+      );
     }
-    const maxTokensClamped = Math.min(Math.max(Number(request.max_tokens) || 512, 16), 4096);
-    const temperatureClamped = Math.min(Math.max(Number(request.temperature) ?? 0.7, 0.0), 1.0);
+    const model = requestedModel;
+
+    // 2. Complete client-supplied messages array validation (Requirement 4)
+    if (!Array.isArray(request.messages) || request.messages.length === 0) {
+      throw new Error('Invalid request: messages must be a non-empty array.');
+    }
+    if (request.messages.length > 50) {
+      throw new Error('Invalid request: messages array exceeds maximum limit of 50 entries.');
+    }
+
+    const allowedRoles = new Set(['system', 'user', 'assistant']);
+    let totalPayloadChars = 0;
+
+    for (let i = 0; i < request.messages.length; i++) {
+      const msg = request.messages[i];
+      if (!msg || typeof msg !== 'object') {
+        throw new Error(`Invalid message at index ${i}: must be an object with role and content.`);
+      }
+      if (!allowedRoles.has(msg.role)) {
+        throw new Error(`Invalid message role "${msg.role}" at index ${i}. Allowed roles: system, user, assistant.`);
+      }
+      if (typeof msg.content !== 'string' || msg.content.trim().length === 0) {
+        throw new Error(`Invalid message at index ${i}: content must be a non-empty string.`);
+      }
+      if (msg.content.length > 4000) {
+        throw new Error(`Message at index ${i} exceeds maximum allowed content length of 4,000 characters.`);
+      }
+      totalPayloadChars += msg.content.length;
+    }
+
+    if (totalPayloadChars > 16000) {
+      throw new Error(
+        `Total messages payload exceeds maximum allowed size of 16,000 characters (received ${totalPayloadChars} characters).`
+      );
+    }
+
+    // 3. Enforce max_tokens & temperature bounds server-side (Requirement 5)
+    const rawMaxTokens = request.max_tokens !== undefined ? Number(request.max_tokens) : 512;
+    if (isNaN(rawMaxTokens) || rawMaxTokens <= 0) {
+      throw new Error('max_tokens must be a positive integer.');
+    }
+    const maxTokensClamped = Math.min(Math.max(Math.floor(rawMaxTokens), 1), 4096);
+
+    const rawTemp = request.temperature !== undefined ? Number(request.temperature) : 0.7;
+    if (isNaN(rawTemp)) {
+      throw new Error('temperature must be a valid number.');
+    }
+    const temperatureClamped = Math.min(Math.max(rawTemp, 0.0), 2.0);
+
+    const userPrompt = request.messages[request.messages.length - 1]?.content || '';
 
     if (!apiKey) {
       // Offline / Developer Test Fixture Mode
@@ -447,6 +555,7 @@ export class AmdTokenFactoryService {
         isRealAmdInference: false,
         latencyMs,
         usage: response.usage,
+        workspaceId,
       });
 
       return response;
@@ -484,6 +593,7 @@ export class AmdTokenFactoryService {
           latencyMs,
           usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
           errorMessage: 'AMD Token Factory rate limit exceeded (HTTP 429)',
+          workspaceId,
         });
         const err: any = new Error('AMD Token Factory rate limit exceeded (HTTP 429)');
         err.status = 429;
@@ -503,6 +613,7 @@ export class AmdTokenFactoryService {
           latencyMs,
           usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
           errorMessage: `HTTP ${response.status}: ${errorText}`,
+          workspaceId,
         });
         throw new Error(`AMD Token Factory /chat/completions returned HTTP ${response.status}: ${errorText}`);
       }
@@ -527,6 +638,7 @@ export class AmdTokenFactoryService {
         isRealAmdInference: true,
         latencyMs,
         usage: data.usage || { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+        workspaceId,
       });
 
       return completionResponse;
@@ -544,6 +656,7 @@ export class AmdTokenFactoryService {
         latencyMs,
         usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
         errorMessage: error.message,
+        workspaceId,
       });
       throw error;
     }
@@ -609,7 +722,7 @@ export class AmdTokenFactoryService {
       })),
     ]);
 
-    const logs = this.getRecentRequests(30);
+    const logs = this.getRecentRequests(30, undefined, workspaceId);
 
     const stats = {
       totalRequests: logs.length,

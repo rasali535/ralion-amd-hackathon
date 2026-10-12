@@ -605,6 +605,7 @@ export async function POST(request: NextRequest) {
         conversationHistory,
         localOverrides,
         requestId,
+        module: 'mari',
       });
     } catch (coreErr: any) {
       await MariCreditsService.finalizeReasoning({

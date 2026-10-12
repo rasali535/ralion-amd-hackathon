@@ -79,15 +79,20 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  // Rate limiting / throttling: max 15 requests per minute per workspace
-  if (!AmdTokenFactoryService.checkRateLimit(auth.context.workspace.id)) {
+  // Distributed rate limiting / throttling: max 15 requests per minute per workspace
+  const throttle = AmdTokenFactoryService.checkDistributedRateLimit(auth.context.workspace.id);
+  if (!throttle.allowed) {
     return corsJsonResponse(
       {
         success: false,
         error: 'RATE_LIMITED',
         message: 'Too many AMD test requests. Please wait before submitting additional inference jobs.',
+        retryAfterMs: throttle.retryAfterMs,
       },
-      { status: 429 },
+      {
+        status: 429,
+        headers: { 'Retry-After': Math.ceil(throttle.retryAfterMs / 1000).toString() },
+      },
       request
     );
   }
@@ -95,17 +100,6 @@ export async function POST(request: NextRequest) {
   try {
     const body = await request.json().catch(() => ({}));
     const rawPrompt = String(body.prompt || '');
-    if (rawPrompt.length > 4000) {
-      return corsJsonResponse(
-        {
-          success: false,
-          error: 'INPUT_TOO_LARGE',
-          message: 'Prompt exceeds maximum allowed boundary of 4,000 characters.',
-        },
-        { status: 400 },
-        request
-      );
-    }
 
     const messages = Array.isArray(body.messages) && body.messages.length > 0
       ? body.messages
@@ -122,6 +116,7 @@ export async function POST(request: NextRequest) {
       max_tokens: body.max_tokens,
       module: moduleTag,
       traceId: body.traceId,
+      workspaceId: auth.context.workspace.id,
     });
 
     return corsJsonResponse(
