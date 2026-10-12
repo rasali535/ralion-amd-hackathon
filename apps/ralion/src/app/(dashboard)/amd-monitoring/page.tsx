@@ -105,20 +105,20 @@ interface TestRunResult {
 
 const PRESET_PROMPTS = [
   {
-    label: 'ROCm Acceleration Analysis',
-    prompt: 'Provide a strategic technical analysis of memory bandwidth advantages for AMD Instinct MI300X with ROCm 6.2 when hosting open LLMs.',
+    label: 'Luxury Delta Safari Itinerary',
+    prompt: 'Generate an exclusive 7-day fly-in luxury safari itinerary for high-net-worth travellers visiting private concessions in the Okavango Delta, focusing on bespoke conservation experiences.',
   },
   {
-    label: 'Mari AI Strategic Plan',
-    prompt: 'Draft an executive market intelligence briefing on accelerating AI enterprise infrastructure through open ecosystems.',
+    label: 'Adventure Mobile Camping Brief',
+    prompt: 'Draft an engaging marketing campaign angle targeting budget-conscious adventure travellers and overlanders for guided mokoro canoe trails across Moremi and Chobe.',
   },
   {
-    label: 'Growth Campaign Copy',
-    prompt: 'Generate a high-converting multi-platform ad campaign for developers building on the AMD ROCm platform.',
+    label: 'Mari AI Eco-Tourism Intelligence',
+    prompt: 'Analyze seasonal demand patterns for Botswana wildlife tourism and recommend pricing tiers that support local community conservation programs.',
   },
   {
-    label: 'Creative Studio Brief',
-    prompt: 'Create a conceptual visual storyboard and design direction for the Ralion OS AMD Hackathon showcase.',
+    label: 'Creative Studio Storyboard',
+    prompt: 'Create a conceptual visual storyboard highlighting sunset mokoro dugout canoes gliding through papyrus waterways, with aerial views of elephant herds.',
   },
 ];
 
@@ -132,7 +132,7 @@ export default function AmdMonitoringCentrePage() {
   const [error, setError] = useState<string | null>(null);
 
   // Test Runner State
-  const [selectedModel, setSelectedModel] = useState<string>('amd-rocm-llama-3-8b-instruct');
+  const [selectedModel, setSelectedModel] = useState<string>('DeepSeek-V4-Flash-0731');
   const [selectedModule, setSelectedModule] = useState<InitiatingModule>('monitoring_test');
   const [testPrompt, setTestPrompt] = useState<string>(PRESET_PROMPTS[0].prompt);
   const [runningTest, setRunningTest] = useState(false);
@@ -465,7 +465,7 @@ export default function AmdMonitoringCentrePage() {
                     onChange={(e) => setSelectedModel(e.target.value)}
                     className="bg-transparent text-xs text-white font-medium focus:outline-none cursor-pointer"
                   >
-                    {(data?.connection.models || ['amd-rocm-llama-3-8b-instruct', 'amd-rocm-mixtral-8x7b-instruct']).map((m) => (
+                    {(data?.connection.models || ['DeepSeek-V4-Flash-0731', 'Qwen3.8-Flash-Next', 'deepseek-ai/DeepSeek-V3', 'meta-llama/Meta-Llama-3-8B-Instruct']).map((m) => (
                       <option key={m} value={m} className="bg-zinc-900 text-white">
                         {m}
                       </option>

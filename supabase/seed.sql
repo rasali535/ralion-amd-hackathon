@@ -1,10 +1,9 @@
 -- ==============================================================================
 -- RALION OS — AMD DEVELOPER HACKATHON ACT III
--- MIGRATION 2: SYNTHETIC DEMONSTRATION SEED & ISOLATED TENANT PROVISIONING
+-- LOCAL DEVELOPMENT SEED FILE (supabase/seed.sql)
 -- ==============================================================================
 -- Target Supabase Project: ralion-amd-hackathon (uosaqcgfvmxzwpxekoov)
 -- Region: eu-central-1
--- Execution Order: 2 of 2 (Executes AFTER schema migration 20261012100000)
 -- ==============================================================================
 
 -- 1. Storage Buckets (If storage schema is present)
@@ -25,6 +24,8 @@ BEGIN
 END $$;
 
 -- 2. Supabase Auth Compatible Synthetic Users (auth.users)
+-- SECURITY COMPLIANT: Passwords use unguessable cryptographic salts so no hardcoded or public credentials exist.
+-- Supported interactive provisioning is handled via scripts/provision-demo-users.js or Supabase Auth Admin API.
 DO $$
 BEGIN
   IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'auth' AND table_name = 'users') THEN
@@ -48,7 +49,7 @@ BEGIN
         'authenticated',
         'authenticated',
         'demo@ralion.ai',
-        crypt('AmdHackathon2026!', gen_salt('bf')),
+        crypt(gen_random_uuid()::text, gen_salt('bf')),
         NOW(),
         '{"provider":"email","providers":["email"],"role":"PLATFORM_ADMIN"}'::jsonb,
         '{"full_name":"AMD Hackathon Developer"}'::jsonb,
@@ -61,7 +62,7 @@ BEGIN
         'authenticated',
         'authenticated',
         'developer@amd-hackathon.local',
-        crypt('AmdHackathon2026!', gen_salt('bf')),
+        crypt(gen_random_uuid()::text, gen_salt('bf')),
         NOW(),
         '{"provider":"email","providers":["email"],"role":"ADMINISTRATOR"}'::jsonb,
         '{"full_name":"ROCm Systems Engineer"}'::jsonb,
@@ -99,8 +100,8 @@ VALUES
   (
     'c0000000-0000-0000-0000-000000000001',
     'b0000000-0000-0000-0000-000000000001',
-    'AMD ROCm AI Lab',
-    'amd-rocm-lab',
+    'Kalahari & Okavango Expeditions Lab',
+    'okavango-expeditions-lab',
     'a0000000-0000-0000-0000-000000000001',
     NOW(),
     NOW()
@@ -108,8 +109,8 @@ VALUES
   (
     'demo-workspace-ralion-amd-2026',
     'demo-org-ralion-amd-2026',
-    'AMD ROCm AI Lab',
-    'amd-rocm-lab-alias',
+    'Kalahari & Okavango Expeditions Lab',
+    'okavango-expeditions-lab-alias',
     'demo-user-ralion-amd-2026',
     NOW(),
     NOW()
@@ -190,7 +191,7 @@ VALUES
   )
 ON CONFLICT (id) DO NOTHING;
 
--- 7. Synthetic Business Profiles
+-- 7. Synthetic Business Profiles: Fictional Botswana Safari Company
 INSERT INTO public.business_profiles (
   id,
   workspace_id,
@@ -209,73 +210,132 @@ VALUES
   (
     'f0000000-0000-0000-0000-000000000001',
     'c0000000-0000-0000-0000-000000000001',
-    'Apex Dynamics ROCm Systems',
-    'AI Compute & Accelerator Infrastructure',
-    'Accelerating enterprise machine learning through open-source ROCm hardware and software ecosystems.',
-    'Democratizing AI training and inference on open AMD Instinct GPU architectures.',
-    'Technical, Authoritative, Bold, Solution-Driven',
-    ARRAY['#ED1C24', '#111827', '#F3F4F6', '#000000'],
-    'Machine Learning Engineers, Data Scientists, and Infrastructure Architects',
-    ARRAY['Nvidia AI Enterprise', 'Intel Habana Gaudi', 'AWS Trainium'],
-    ARRAY['Achieve 150+ tokens/sec on MI300X clusters', 'Expand open model serving support', 'Deliver automated visual QA pipelines'],
+    'Kalahari & Okavango Wilderness Expeditions',
+    'Eco-Tourism & Wildlife Conservation Expeditions',
+    'To deliver transformative African wildlife experiences across the Okavango Delta, Moremi Game Reserve, and Makgadikgadi Pans while directly funding habitat preservation and community wildlife stewardship.',
+    'To set the gold standard for regenerative, low-impact safari travel in Southern Africa, connecting global travellers with Botswana''s pristine untamed wilderness.',
+    'Evocative, Inspiring, Conservation-Led, Authentic, Grounded',
+    ARRAY['#C49A45', '#1B3B2B', '#E6D7B9', '#8C4B27'],
+    'Two distinct traveller profiles: (1) Luxury Wilderness Travellers seeking private delta concessions, bespoke photographic safaris, and 5-star conservation lodges; (2) Budget-Conscious Adventure Travellers seeking participatory mobile camping expeditions, guided mokoro dugout canoe trails, and small-group overlanding.',
+    ARRAY['Wilderness Safaris', 'andBeyond Botswana', 'Belmond Safaris', 'Desert & Delta Safaris'],
+    ARRAY['Increase direct international bookings for Okavango Delta fly-in safaris by 40%', 'Launch community-guided mobile eco-camps for adventure travellers', 'Maintain 100% solar and carbon-neutral lodge operations'],
     NOW()
   ),
   (
     'demo-biz-profile-apex-2026',
     'demo-workspace-ralion-amd-2026',
-    'Apex Dynamics ROCm Systems',
-    'AI Compute & Accelerator Infrastructure',
-    'Accelerating enterprise machine learning through open-source ROCm hardware and software ecosystems.',
-    'Democratizing AI training and inference on open AMD Instinct GPU architectures.',
-    'Technical, Authoritative, Bold, Solution-Driven',
-    ARRAY['#ED1C24', '#111827', '#F3F4F6', '#000000'],
-    'Machine Learning Engineers, Data Scientists, and Infrastructure Architects',
-    ARRAY['Nvidia AI Enterprise', 'Intel Habana Gaudi', 'AWS Trainium'],
-    ARRAY['Achieve 150+ tokens/sec on MI300X clusters', 'Expand open model serving support', 'Deliver automated visual QA pipelines'],
+    'Kalahari & Okavango Wilderness Expeditions',
+    'Eco-Tourism & Wildlife Conservation Expeditions',
+    'To deliver transformative African wildlife experiences across the Okavango Delta, Moremi Game Reserve, and Makgadikgadi Pans while directly funding habitat preservation and community wildlife stewardship.',
+    'To set the gold standard for regenerative, low-impact safari travel in Southern Africa, connecting global travellers with Botswana''s pristine untamed wilderness.',
+    'Evocative, Inspiring, Conservation-Led, Authentic, Grounded',
+    ARRAY['#C49A45', '#1B3B2B', '#E6D7B9', '#8C4B27'],
+    'Two distinct traveller profiles: (1) Luxury Wilderness Travellers seeking private delta concessions, bespoke photographic safaris, and 5-star conservation lodges; (2) Budget-Conscious Adventure Travellers seeking participatory mobile camping expeditions, guided mokoro dugout canoe trails, and small-group overlanding.',
+    ARRAY['Wilderness Safaris', 'andBeyond Botswana', 'Belmond Safaris', 'Desert & Delta Safaris'],
+    ARRAY['Increase direct international bookings for Okavango Delta fly-in safaris by 40%', 'Launch community-guided mobile eco-camps for adventure travellers', 'Maintain 100% solar and carbon-neutral lodge operations'],
     NOW()
   )
 ON CONFLICT (id) DO UPDATE SET
   business_name = EXCLUDED.business_name,
+  industry = EXCLUDED.industry,
   mission = EXCLUDED.mission,
+  vision = EXCLUDED.vision,
+  brand_voice = EXCLUDED.brand_voice,
+  brand_colors = EXCLUDED.brand_colors,
+  target_audience = EXCLUDED.target_audience,
+  competitors = EXCLUDED.competitors,
+  business_goals = EXCLUDED.business_goals,
   updated_at = NOW();
 
--- 8. Synthetic Marketing Campaigns
-INSERT INTO public.marketing_campaigns (id, workspace_id, title, target_platform, status, budget, start_date, end_date, created_at)
+-- 8. Synthetic Marketing Campaigns (Distinct Objectives, Messaging & Creative Directions)
+INSERT INTO public.marketing_campaigns (
+  id,
+  workspace_id,
+  title,
+  target_platform,
+  status,
+  budget,
+  description,
+  metadata,
+  start_date,
+  end_date,
+  created_at
+)
 VALUES
   (
-    'demo-camp-mi300x-2026',
+    'demo-camp-luxury-safari-2026',
     'c0000000-0000-0000-0000-000000000001',
-    'AMD Instinct MI300X Global Launch',
-    'linkedin',
+    'Okavango Untamed — Private Concession Sanctuary',
+    'instagram',
     'ACTIVE',
-    15000,
+    35000.00,
+    'Luxury audience acquisition targeting high-net-worth travellers and honeymooners for bespoke fly-in private delta lodges.',
+    '{
+      "target_segment": "luxury_travellers",
+      "objective": "Drive qualified high-value inquiries for bespoke fly-in luxury tented camp itineraries in private delta concessions.",
+      "messaging": "Exclusive seclusion in the heart of the Okavango Delta. Wake to the call of the fish eagle in your private open-air suite, followed by private game tracking and sunset mokoro excursions. Rare, refined, and entirely untouched.",
+      "creative_direction": "Golden-hour aerial photography of water channels, intimate candlelit boma dinners, elegant tented suite wooden decks over water lily lagoons, high-contrast wildlife portraits (leopard resting on ebony branch)."
+    }'::jsonb,
+    NOW(),
+    NOW() + INTERVAL '45 days',
+    NOW()
+  ),
+  (
+    'demo-camp-adventure-safari-2026',
+    'c0000000-0000-0000-0000-000000000001',
+    'Botswana Frontier — Mobile Expedition & Mokoro Trails',
+    'x',
+    'ACTIVE',
+    12000.00,
+    'Adventure audience acquisition targeting overlanders, backpackers, and small-group wildlife explorers.',
+    '{
+      "target_segment": "budget_adventure_travellers",
+      "objective": "Drive seasonal bookings for participatory mobile guided camping safaris across Chobe and Moremi.",
+      "messaging": "Real Africa, unplugged and unfiltered. Sleep beneath a canopy of stars in Makgadikgadi and navigate pristine delta channels with local BaYei guides. Maximum wildlife, zero luxury tax.",
+      "creative_direction": "Raw, dynamic action shots of Land Cruiser river crossings, campfire storytelling under the Milky Way, guides poling traditional mokoros through papyrus reedways, herd of elephants crossing the Chobe riverfront."
+    }'::jsonb,
     NOW(),
     NOW() + INTERVAL '30 days',
     NOW()
-  ),
+  )
+ON CONFLICT (id) DO UPDATE SET
+  title = EXCLUDED.title,
+  budget = EXCLUDED.budget,
+  description = EXCLUDED.description,
+  metadata = EXCLUDED.metadata;
+
+-- 8b. Strategic AI Memory for Audience Segments
+INSERT INTO public.ai_memory (
+  id,
+  workspace_id,
+  category,
+  content,
+  confidence,
+  metadata,
+  created_at
+)
+VALUES
   (
-    'demo-camp-rocm-sprint-2026',
+    'mem-audience-luxury-2026',
     'c0000000-0000-0000-0000-000000000001',
-    'ROCm Open Ecosystem Developer Sprint',
-    'x',
-    'SCHEDULED',
-    8500,
-    NOW() + INTERVAL '5 days',
-    NOW() + INTERVAL '20 days',
+    'AUDIENCE_SEGMENT_LUXURY',
+    'Luxury Wilderness Travellers Segment Profile: High-net-worth travellers, affluent couples, and honeymooners. High willingness to pay ($8,000–$15,000/person). Values complete seclusion, private guides, aerial transfers, fine dining in the bush, and low-density private concessions. Preferred touchpoints: curated Instagram carousels, bespoke concierge itineraries, and direct conservation impact reporting.',
+    1.0,
+    '{"segment":"luxury_travellers","avg_booking_usd":11500,"primary_channel":"instagram"}'::jsonb,
     NOW()
   ),
   (
-    'demo-camp-creative-ai-2026',
+    'mem-audience-adventure-2026',
     'c0000000-0000-0000-0000-000000000001',
-    'Holiday Creative AI Showcase',
-    'instagram',
-    'DRAFT',
-    5000,
-    NOW() + INTERVAL '14 days',
-    NOW() + INTERVAL '45 days',
+    'AUDIENCE_SEGMENT_ADVENTURE',
+    'Budget-Conscious Adventure Travellers Segment Profile: Independent overlanders, self-drive enthusiasts, student researchers, and wildlife photographers. Budget sensitive ($850–$2,200/person). Values authentic participatory camping, guide expertise, walking trails, and traditional mokoro canoe wilderness access. Preferred touchpoints: community travel forums, YouTube expedition logs, and high-energy social video.',
+    1.0,
+    '{"segment":"budget_adventure_travellers","avg_booking_usd":1450,"primary_channel":"x"}'::jsonb,
     NOW()
   )
-ON CONFLICT (id) DO NOTHING;
+ON CONFLICT (id) DO UPDATE SET
+  content = EXCLUDED.content,
+  metadata = EXCLUDED.metadata;
 
 -- 9. Synthetic Tenant Credit Wallets (1,000,000 synthetic compute credits)
 INSERT INTO public.tenant_credit_wallets (

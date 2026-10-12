@@ -271,9 +271,34 @@ runTest('Synthetic seed contains valid Supabase Auth user integration and demo f
   assert.ok(seedSql.includes('auth.users'), 'Must contain conditional seed into auth.users');
   assert.ok(seedSql.includes('a0000000-0000-0000-0000-000000000001'), 'Must seed primary demo user UUID');
   assert.ok(seedSql.includes('c0000000-0000-0000-0000-000000000001'), 'Must seed primary demo workspace UUID');
-  assert.ok(seedSql.includes('Apex Dynamics ROCm Systems'), 'Must seed synthetic business profile');
-  assert.ok(seedSql.includes('AMD Instinct MI300X Global Launch'), 'Must seed synthetic marketing campaigns');
+  assert.ok(seedSql.includes('Kalahari & Okavango Wilderness Expeditions'), 'Must seed Botswana safari company business profile');
+  assert.ok(seedSql.includes('Okavango Untamed — Private Concession Sanctuary'), 'Must seed luxury safari campaign');
+  assert.ok(seedSql.includes('Botswana Frontier — Mobile Expedition & Mokoro Trails'), 'Must seed adventure safari campaign');
+  assert.ok(seedSql.includes('AUDIENCE_SEGMENT_LUXURY'), 'Must seed luxury audience AI memory');
+  assert.ok(seedSql.includes('AUDIENCE_SEGMENT_ADVENTURE'), 'Must seed adventure audience AI memory');
   assert.ok(seedSql.includes('tenant_credit_wallets'), 'Must seed synthetic credit wallets');
+});
+
+runTest('SQL migrations contain ZERO hardcoded passwords and use unguessable hashes', () => {
+  const migrationsDir = path.join(__dirname, '../supabase/migrations');
+  const files = fs.readdirSync(migrationsDir).filter(f => f.endsWith('.sql'));
+
+  for (const file of files) {
+    const content = fs.readFileSync(path.join(migrationsDir, file), 'utf-8');
+    assert.ok(
+      !content.includes('AmdHackathon2026!'),
+      `Migration ${file} must NOT contain hardcoded password AmdHackathon2026!`
+    );
+  }
+
+  const seedSql = fs.readFileSync(seedMigrationPath, 'utf-8');
+  assert.ok(
+    seedSql.includes('gen_random_uuid()::text'),
+    'Synthetic auth.users seed must use unguessable random salt/hash'
+  );
+
+  const provisionScript = path.join(__dirname, 'provision-demo-users.js');
+  assert.ok(fs.existsSync(provisionScript), 'Supported provision-demo-users.js script must exist');
 });
 
 runTest('Confirmed hackathon Supabase project uosaqcgfvmxzwpxekoov is canonical endpoint', () => {

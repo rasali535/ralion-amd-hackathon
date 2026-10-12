@@ -134,6 +134,8 @@ CREATE TABLE IF NOT EXISTS public.marketing_campaigns (
   target_platform TEXT NOT NULL,
   status TEXT NOT NULL DEFAULT 'DRAFT',
   budget NUMERIC(12, 2) DEFAULT 0.00,
+  description TEXT,
+  metadata JSONB DEFAULT '{}'::JSONB,
   start_date TIMESTAMPTZ,
   end_date TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()

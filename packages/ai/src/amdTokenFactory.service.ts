@@ -144,7 +144,7 @@ export interface AmdMonitoringOverview {
 
 export class AmdTokenFactoryService {
   public static readonly DEFAULT_BASE_URL = 'https://developer.amd.com.cn/radeon/api/v1';
-  public static readonly DEFAULT_MODEL = 'amd-rocm-llama-3-8b-instruct';
+  public static readonly DEFAULT_MODEL = 'DeepSeek-V4-Flash-0731';
 
   // In-memory request ledger (last 50 requests)
   private static requestLogs: AmdRequestLog[] = [
@@ -152,8 +152,8 @@ export class AmdTokenFactoryService {
       traceId: 'amd_trc_init_mari_01',
       timestamp: new Date(Date.now() - 1000 * 60 * 18).toISOString(),
       module: 'mari',
-      model: 'amd-rocm-llama-3-8b-instruct',
-      promptSnippet: 'Formulate strategic market expansion analysis for ROCm compute...',
+      model: 'DeepSeek-V4-Flash-0731',
+      promptSnippet: 'Formulate strategic market expansion analysis for Okavango safaris...',
       status: 'SIMULATED',
       isRealAmdInference: false,
       latencyMs: 74,
@@ -163,8 +163,8 @@ export class AmdTokenFactoryService {
       traceId: 'amd_trc_init_growth_01',
       timestamp: new Date(Date.now() - 1000 * 60 * 12).toISOString(),
       module: 'growth',
-      model: 'amd-rocm-llama-3-8b-instruct',
-      promptSnippet: 'Draft multi-channel audience targeting campaign for AMD Instinct MI300X...',
+      model: 'DeepSeek-V4-Flash-0731',
+      promptSnippet: 'Draft luxury traveller campaign copy for private delta concessions...',
       status: 'SIMULATED',
       isRealAmdInference: false,
       latencyMs: 62,
@@ -174,8 +174,8 @@ export class AmdTokenFactoryService {
       traceId: 'amd_trc_init_creative_01',
       timestamp: new Date(Date.now() - 1000 * 60 * 6).toISOString(),
       module: 'creative',
-      model: 'amd-rocm-mixtral-8x7b-instruct',
-      promptSnippet: 'Compose storyboard scene brief and visual mood board direction...',
+      model: 'Qwen3.8-Flash-Next',
+      promptSnippet: 'Compose storyboard scene brief for Makgadikgadi mobile camping...',
       status: 'SIMULATED',
       isRealAmdInference: false,
       latencyMs: 88,
@@ -251,7 +251,7 @@ export class AmdTokenFactoryService {
         status: 'SIMULATED',
         endpoint,
         hasApiKey: false,
-        models: ['amd-rocm-llama-3-8b-instruct', 'amd-rocm-mixtral-8x7b-instruct'],
+        models: ['DeepSeek-V4-Flash-0731', 'Qwen3.8-Flash-Next', 'deepseek-ai/DeepSeek-V3', 'meta-llama/Meta-Llama-3-8B-Instruct'],
         selectedModel: this.DEFAULT_MODEL,
         latencyMs: 14,
         isFixture: true,
@@ -281,7 +281,7 @@ export class AmdTokenFactoryService {
           status: 'RATE_LIMITED',
           endpoint,
           hasApiKey: true,
-          models: ['amd-rocm-llama-3-8b-instruct'],
+          models: ['DeepSeek-V4-Flash-0731', 'Qwen3.8-Flash-Next'],
           selectedModel: this.DEFAULT_MODEL,
           latencyMs,
           isFixture: false,
@@ -305,7 +305,7 @@ export class AmdTokenFactoryService {
       }
 
       const data = await response.json();
-      const models = Array.isArray(data?.data) ? data.data.map((m: any) => m.id) : ['amd-rocm-llama-3-8b-instruct'];
+      const models = Array.isArray(data?.data) ? data.data.map((m: any) => m.id) : ['DeepSeek-V4-Flash-0731'];
 
       return {
         status: 'LIVE',
@@ -344,18 +344,28 @@ export class AmdTokenFactoryService {
         object: 'list',
         data: [
           {
-            id: 'amd-rocm-llama-3-8b-instruct',
+            id: 'DeepSeek-V4-Flash-0731',
             object: 'model',
             owned_by: 'amd-radeon',
           },
           {
-            id: 'amd-rocm-mixtral-8x7b-instruct',
+            id: 'Qwen3.8-Flash-Next',
+            object: 'model',
+            owned_by: 'amd-radeon',
+          },
+          {
+            id: 'deepseek-ai/DeepSeek-V3',
+            object: 'model',
+            owned_by: 'amd-radeon',
+          },
+          {
+            id: 'meta-llama/Meta-Llama-3-8B-Instruct',
             object: 'model',
             owned_by: 'amd-radeon',
           },
         ],
         isFixture: true,
-        fixtureNotice: 'TEST_FIXTURE: No RADEON_API_KEY configured; returning offline test catalog.',
+        fixtureNotice: 'TEST_FIXTURE: No RADEON_API_KEY configured; returning offline verified test catalog.',
       };
     }
 
