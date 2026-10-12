@@ -15,7 +15,7 @@ declare global {
 let _supabaseInstance: SupabaseClient | null = null;
 let _sharedRefreshPromise: Promise<{ data: { session: Session | null; user: any | null }; error: any | null }> | null = null;
 
-export const CANONICAL_SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || 'http://localhost:54321';
+export const CANONICAL_SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://uosaqcgfvmxzwpxekoov.supabase.co';
 export const CANONICAL_SUPABASE_PUBLISHABLE_KEY = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || 'demo-anon-key-placeholder';
 export const CANONICAL_STORAGE_KEY = 'ralion-app-auth-token';
 

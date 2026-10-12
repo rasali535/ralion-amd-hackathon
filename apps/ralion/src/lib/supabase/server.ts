@@ -31,7 +31,7 @@ export async function createClient() {
   );
 }
 
-export const CANONICAL_SUPABASE_URL = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || 'http://localhost:54321';
+export const CANONICAL_SUPABASE_URL = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://uosaqcgfvmxzwpxekoov.supabase.co';
 
 type PrivilegedKeySource =
   | 'SUPABASE_SECRET_KEY'

@@ -32,7 +32,7 @@ export interface AmdTokenMintResult {
 }
 
 export class AmdTokenFactoryService {
-  private static readonly DEFAULT_BASE_URL = 'https://tokenfactory.amd.com/api/v1';
+  private static readonly DEFAULT_BASE_URL = 'https://developer.amd.com.cn/radeon/api/v1';
 
   private static getApiKey(): string | null {
     return process.env.RADEON_API_KEY || null;

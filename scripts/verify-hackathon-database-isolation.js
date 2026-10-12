@@ -179,6 +179,44 @@ runTest('Synthetic seed migration exists and contains demo organizations & profi
   assert.ok(seedSql.includes('tenant_credit_wallets'), 'Must seed synthetic credit wallets');
 });
 
+runTest('Confirmed hackathon Supabase project uosaqcgfvmxzwpxekoov is canonical endpoint', () => {
+  const clientCode = fs.readFileSync(
+    path.join(__dirname, '../apps/ralion/src/lib/supabase/client.ts'),
+    'utf-8'
+  );
+  assert.ok(
+    clientCode.includes('https://uosaqcgfvmxzwpxekoov.supabase.co'),
+    'client.ts CANONICAL_SUPABASE_URL must default to https://uosaqcgfvmxzwpxekoov.supabase.co'
+  );
+});
+
+runTest('AmdTokenFactoryService targets https://developer.amd.com.cn/radeon/api/v1', () => {
+  const factoryCode = fs.readFileSync(
+    path.join(__dirname, '../packages/ai/src/amdTokenFactory.service.ts'),
+    'utf-8'
+  );
+  assert.ok(
+    factoryCode.includes('https://developer.amd.com.cn/radeon/api/v1'),
+    'DEFAULT_BASE_URL must be https://developer.amd.com.cn/radeon/api/v1'
+  );
+});
+
+runTest('Minimal hackathon schema and RLS policies migration is declared', () => {
+  const minimalMigrationPath = path.join(
+    __dirname,
+    '../supabase/migrations/20261012130000_hackathon_minimal_schema_and_rls.sql'
+  );
+  assert.ok(fs.existsSync(minimalMigrationPath), '20261012130000_hackathon_minimal_schema_and_rls.sql must exist');
+  const schemaSql = fs.readFileSync(minimalMigrationPath, 'utf-8');
+  assert.ok(schemaSql.includes('CREATE TABLE IF NOT EXISTS public.organizations'), 'Must declare organizations');
+  assert.ok(schemaSql.includes('CREATE TABLE IF NOT EXISTS public.workspaces'), 'Must declare workspaces');
+  assert.ok(schemaSql.includes('CREATE TABLE IF NOT EXISTS public.business_profiles'), 'Must declare business_profiles');
+  assert.ok(schemaSql.includes('CREATE TABLE IF NOT EXISTS public.creative_assets'), 'Must declare creative_assets');
+  assert.ok(schemaSql.includes('CREATE TABLE IF NOT EXISTS public.marketing_campaigns'), 'Must declare marketing_campaigns');
+  assert.ok(schemaSql.includes('CREATE TABLE IF NOT EXISTS public.tenant_credit_wallets'), 'Must declare tenant_credit_wallets');
+  assert.ok(schemaSql.includes('ENABLE ROW LEVEL SECURITY'), 'Must enable RLS across tables');
+});
+
 runTest('Zero migrations contain forbidden production project references', () => {
   const migrationsDir = path.join(__dirname, '../supabase/migrations');
   const files = fs.readdirSync(migrationsDir).filter(f => f.endsWith('.sql'));

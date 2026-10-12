@@ -11,7 +11,7 @@ import {
 
 import { assertNotProductionEndpoint } from '@ralion/core';
 
-const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || 'http://localhost:54321';
+const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://uosaqcgfvmxzwpxekoov.supabase.co';
 const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY || 'public-anon-key-placeholder';
 
 assertNotProductionEndpoint(SUPABASE_URL, 'Database Supabase URL');
