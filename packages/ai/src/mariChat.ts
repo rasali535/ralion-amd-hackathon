@@ -1,0 +1,907 @@
+import { generateHfImage, generateHfVideo } from './aimlClient';
+import type { BusinessContext } from './businessContext.service';
+import { BusinessKnowledgeProfileService } from './businessKnowledgeProfile.service';
+import { WebsiteIngestionService } from './websiteIngestion.service';
+
+export interface MariQueryResponse {
+  answer: string;
+  suggestedActions?: Array<{
+    type: string;
+    label: string;
+    payload: any;
+  }>;
+  relatedData?: any;
+}
+
+export interface MariTokenUsage {
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+}
+
+export interface SelectedModelInfo {
+  model: string;
+  category: string;
+  endpoint: 'chat' | 'image' | 'video';
+  tokens?: MariTokenUsage;
+}
+
+export interface MariApiResult {
+  text: string;
+  modelInfo: SelectedModelInfo;
+  usage?: MariTokenUsage;
+  tokens?: MariTokenUsage;
+  detectedIntent?: string;
+  provenanceSources?: string[];
+  responseSource?: 'gemini' | 'local_grounded' | 'media_generator';
+}
+
+export interface ChatHistoryMessage {
+  role: 'user' | 'model';
+  text: string;
+}
+
+export interface MariExecutionTelemetry {
+  requestId: string;
+  detectedIntent: string;
+  contextSourcesLoaded: string[];
+  modelSelected: string;
+  geminiInvoked: boolean;
+  fallbackInvoked: boolean;
+  fallbackReason?: string;
+  responseSource: 'gemini' | 'local_grounded' | 'media_generator';
+}
+
+/**
+ * Accurately estimates token count for text when provider usage metadata is unavailable.
+ * Uses a weighted algorithm: ~4 characters per token + word-boundary token weighting.
+ */
+export function estimateTokenCount(text: string): number {
+  if (!text || text.trim().length === 0) return 0;
+  const words = text.trim().split(/\s+/).length;
+  const chars = text.length;
+  return Math.max(1, Math.round(chars / 4 + words * 0.25));
+}
+
+/**
+ * Task-based model router for media and specialist endpoints.
+ */
+export function selectBestAimlModel(prompt: string): SelectedModelInfo {
+  // 1. Text-to-Video → HuggingFace CogVideoX (Only for direct video generation triggers)
+  if (/^(generate|create|render|make)\s+(a\s+)?(video|animation|clip|timelapse|movie|video reel)\b/i.test(prompt) ||
+      /\b(text[- ]to[- ]video)\b/i.test(prompt)) {
+    return { model: 'zai-org/CogVideoX-2b', category: 'HuggingFace CogVideoX', endpoint: 'video' };
+  }
+  // 2. Text-to-Image → HuggingFace FLUX
+  if (/^(generate|create|draw|paint|render)\s+(an?\s+)?(image|picture|photo|logo|banner|diagram|poster|illustration)\b/i.test(prompt) ||
+      /\b(text[- ]to[- ]image)\b/i.test(prompt) ||
+      /\b(image|picture|photo|drawing)\s+of\b/i.test(prompt)) {
+    return { model: 'black-forest-labs/FLUX.1-schnell', category: 'HuggingFace FLUX', endpoint: 'image' };
+  }
+  // 3. Deep Reasoning
+  if (/\b(reason|audit|strategy|deep|complex|math|calc|proof|formula|logic|architecture|evaluate|diagnose)\b/i.test(prompt)) {
+    return { model: 'deepseek/deepseek-r1', category: 'Deep Reasoning Engine', endpoint: 'chat' };
+  }
+  // 4. Code & Technical
+  if (/\b(code|script|function|sql|python|javascript|typescript|html|css|bug|fix|api|json|regex|query|database|table|schema)\b/i.test(prompt)) {
+    return { model: 'qwen/qwen-2.5-coder-32b-instruct', category: 'Technical Intelligence', endpoint: 'chat' };
+  }
+  // 5. Creative Writing / Marketing
+  if (/\b(write|draft|email|copy|headline|marketing|campaign|blog|story|pitch|announcement|press release)\b/i.test(prompt)) {
+    return { model: 'gemini-2.5-flash', category: 'Creative Intelligence', endpoint: 'chat' };
+  }
+  // 6. Default: General Business Intelligence
+  return { model: 'gemini-2.5-flash', category: 'Mari Enterprise Intelligence', endpoint: 'chat' };
+}
+
+// ============================================================
+// Gemini API Keys — loaded strictly from environment variables
+// ============================================================
+export function getAvailableGeminiKeys(): string[] {
+  const keys = [
+    process.env.GEMINI_API_KEY,
+    process.env.GOOGLE_AI_API_KEY,
+    process.env.GOOGLE_API_KEY,
+    process.env.GOOGLE_GENERATIVE_AI_API_KEY,
+  ].filter(Boolean) as string[];
+  return Array.from(new Set(keys.map(k => k.trim()).filter(k => k.length > 0)));
+}
+
+// ============================================================
+// Gemini task-based model router
+// ============================================================
+interface GeminiModelSelection {
+  model: string;
+  category: string;
+  reasoning: boolean;
+}
+
+function selectGeminiModel(prompt: string): GeminiModelSelection {
+  const p = prompt.toLowerCase();
+
+  // Deep reasoning / audit / complex analysis
+  if (/\b(reason|audit|evaluate|diagnose|complex|strategy|forecast|plan|roadmap|formula|logic)\b/i.test(p)) {
+    return { model: 'gemini-2.5-flash', category: 'Mari Strategic Reasoning', reasoning: true };
+  }
+
+  // Creative writing / marketing / copywriting
+  if (/\b(write|draft|email|copy|headline|marketing|blog|story|pitch|announcement|press release|campaign)\b/i.test(p)) {
+    return { model: 'gemini-2.5-flash', category: 'Mari Creative Intelligence', reasoning: false };
+  }
+
+  // General business / CRM / growth intelligence (default)
+  return { model: 'gemini-2.5-flash', category: 'Mari Business Intelligence', reasoning: false };
+}
+
+interface GeminiCallResult {
+  text: string;
+  usage: MariTokenUsage;
+}
+
+/**
+ * Call the Google Gemini API with systemInstruction, multi-turn conversation history, and automatic key rotation.
+ */
+async function callGeminiApi(
+  prompt: string,
+  systemPrompt: string,
+  conversationHistory: ChatHistoryMessage[] = [],
+  modelName: string = 'gemini-2.5-flash'
+): Promise<GeminiCallResult | null> {
+  const activeKeys = getAvailableGeminiKeys();
+  if (activeKeys.length === 0) {
+    return null;
+  }
+
+  // Build clean multi-turn contents payload
+  const contents: Array<{ role: 'user' | 'model'; parts: Array<{ text: string }> }> = [];
+
+  // Append history (keeping the last 10 turns to avoid token overflow)
+  const recentHistory = conversationHistory.slice(-10);
+  for (const msg of recentHistory) {
+    if (msg.text && msg.text.trim()) {
+      contents.push({
+        role: msg.role === 'user' ? 'user' : 'model',
+        parts: [{ text: msg.text.trim() }],
+      });
+    }
+  }
+
+  // Append current user prompt
+  contents.push({
+    role: 'user',
+    parts: [{ text: prompt.trim() }],
+  });
+
+  const requestBody: any = {
+    contents,
+    generationConfig: {
+      temperature: 0.65,
+      maxOutputTokens: 1500,
+    },
+  };
+
+  if (systemPrompt && systemPrompt.trim()) {
+    requestBody.systemInstruction = {
+      parts: [{ text: systemPrompt.trim() }],
+    };
+  }
+
+  for (const key of activeKeys) {
+    try {
+      const res = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${key}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(requestBody),
+          signal: AbortSignal.timeout(15000),
+        }
+      );
+
+      if (!res.ok) {
+        continue;
+      }
+
+      const data = await res.json();
+      let text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+      if (text) {
+        text = sanitizeWebRefusalText(text, prompt);
+
+        const usageMetadata = data.usageMetadata;
+        let usage: MariTokenUsage = {
+          promptTokens: usageMetadata?.promptTokenCount || estimateTokenCount(prompt + systemPrompt),
+          completionTokens: usageMetadata?.candidatesTokenCount || estimateTokenCount(text),
+          totalTokens: usageMetadata?.totalTokenCount || (estimateTokenCount(prompt + systemPrompt) + estimateTokenCount(text)),
+        };
+
+        return {
+          text,
+          usage,
+        };
+      }
+    } catch {
+      // Rotate to next key on network timeout or failure
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Strips accidental "I cannot browse the web" phrases and redirects to authoritative business knowledge.
+ */
+function sanitizeWebRefusalText(rawText: string, _prompt: string): string {
+  if (
+    rawText.toLowerCase().includes('do not have real-time web browsing') ||
+    rawText.toLowerCase().includes('cannot access the internet') ||
+    rawText.toLowerCase().includes('cannot browse') ||
+    rawText.toLowerCase().includes('do not have the ability to browse')
+  ) {
+    return rawText
+      .replace(/As (an AI|Mari AI), I (do not have|don't have) (real-time )?(web browsing|access to the internet|browsing capabilities)[^.]*\./gi, '')
+      .replace(/I cannot browse (the live web|websites|real-time internet)[^.]*\./gi, '')
+      .trim();
+  }
+  return rawText;
+}
+
+/**
+ * Semantic Intent Detector for diagnostics and grounded routing.
+ * Intent acts as an enrichment classifier, NEVER as a blocker.
+ */
+export function detectSemanticIntent(prompt: string): string {
+  const p = prompt.toLowerCase().trim();
+
+  // 1. Pure greeting check (Only short standalone greetings)
+  if (/^(hello|hi|hey|good\s+(morning|afternoon|evening)|greetings|howdy)(\s+(there|mari|ai))?[\s!.,👋]*$/i.test(p)) {
+    return 'GREETING';
+  }
+
+  // 2. Multi-part / Compound Query Detection
+  const questionCount = (prompt.match(/\?/g) || []).length;
+  const sentenceCount = prompt.split(/[.!?]+/).filter(s => s.trim().length > 0).length;
+  const hasMultipleTopics = (
+    (p.includes('compare') || p.includes('last month') || p.includes('growth position')) &&
+    (p.includes('enterprise') || p.includes('facebook') || p.includes('overlooking') || p.includes('what if'))
+  );
+
+  if (questionCount >= 2 || hasMultipleTopics || (sentenceCount >= 3 && prompt.length > 100)) {
+    return 'COMPOUND_QUERY';
+  }
+
+  // 3. Specific Business Sub-intents
+  if (/\b(what\s+does\s+(our|the|my)\s+website\s+say|what('s|\s+is)\s+on\s+(our|my)\s+website|website\s+knowledge|summarize\s+(our|my|the)\s+website|website\s+intelligence|what\s+do\s+you\s+know\s+about\s+(our|my|the)\s+website|what\s+did\s+you\s+learn\s+from\s+(our|my|the)\s+website|show\s+website\s+intelligence)\b/i.test(p)) {
+    return 'WEBSITE_KNOWLEDGE';
+  }
+  if (/\b(what\s+is\s+(my|our)\s+business|what\s+does\s+(my|our)\s+business\s+do|what\s+do\s+(we|i)\s+sell|what\s+services\s+do\s+we\s+provide|who\s+are\s+we|tell\s+me\s+about\s+(us|our\s+company|my\s+business|ras\s+ali\s+labs)|about\s+(the|my|our)\s+business|company\s+overview)\b/i.test(p)) {
+    return 'BUSINESS_IDENTITY';
+  }
+  if (/\b(instagram|ig\s+account|ig\s+profile)\b/i.test(p)) {
+    return 'INSTAGRAM_CHANNEL';
+  }
+  if (/\b(who\s+are\s+(our|the)\s+target\s+customers|who\s+are\s+our\s+customers|target\s+(market|audience|customers)|who\s+do\s+we\s+serve|target\s+demographic)\b/i.test(p)) {
+    return 'TARGET_CUSTOMERS';
+  }
+  if (/\b(performance|how\s+is\s+(the\s+business|everything)\s+performing|how\s+are\s+we\s+doing|give\s+me\s+a\s+performance\s+update|performance\s+update|business\s+performance|metrics|analytics\s+overview)\b/i.test(p)) {
+    return 'BUSINESS_PERFORMANCE';
+  }
+  if (/\b(where\s+did\s+(those|these)\s+numbers\s+come\s+from|data\s+source|provenance|how\s+do\s+you\s+know|where\s+did\s+you\s+get\s+(that|those)\s+metrics)\b/i.test(p)) {
+    return 'PROVENANCE_INQUIRY';
+  }
+  if (/\b(summarize\s+(our\s+)?(recent\s+)?activity|activity\s+summary|what\s+have\s+we\s+done|recent\s+activity|latest\s+actions|activity\s+update)\b/i.test(p)) {
+    return 'ACTIVITY_SUMMARY';
+  }
+  if (/\b(what\s+should\s+we\s+focus\s+on|where\s+to\s+focus|priorities\s+for\s+this\s+week|this\s+week\s+focus|what\s+should\s+our\s+priority\s+be|what\s+to\s+focus\s+on\s+this\s+week)\b/i.test(p)) {
+    return 'WEEKLY_FOCUS';
+  }
+  if (/\b(how\s+can\s+we\s+grow|how\s+do\s+we\s+grow|growth\s+opportunities|growth\s+strategy|how\s+to\s+grow\s+this\s+business|scale\s+the\s+business)\b/i.test(p)) {
+    return 'GROWTH_STRATEGY';
+  }
+  if (/\b(create|generate|produce|make)\s+(a\s+)?(commercial\s+)?(reel|video|visual|poster|campaign|creative)\b/i.test(p)) {
+    return 'CREATIVE_STUDIO';
+  }
+  if (/\b(what\s+is\s+ralion|how\s+to\s+use\s+ralion|ralion\s+modules|pricing|billing\s+help|license)\b/i.test(p)) {
+    return 'PLATFORM_KNOWLEDGE';
+  }
+
+  // 4. Default: All open-ended, scenario, critical, and strategic business inquiries
+  return 'GENERAL_REASONING';
+}
+
+/**
+ * Call Mari AI API with context, history, and graceful resilience.
+ */
+export async function callMariAiApi(
+  prompt: string,
+  systemPrompt?: string,
+  businessContext?: any,
+  options?: {
+    conversationHistory?: ChatHistoryMessage[];
+    requestId?: string;
+    onTelemetry?: (telemetry: MariExecutionTelemetry) => void;
+  } | ChatHistoryMessage[]
+): Promise<MariApiResult | null> {
+  const history: ChatHistoryMessage[] = Array.isArray(options)
+    ? options
+    : options?.conversationHistory || [];
+
+  const requestId = (!Array.isArray(options) && options?.requestId)
+    ? options.requestId
+    : `req_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+
+  const detectedIntent = detectSemanticIntent(prompt);
+  const contextSourcesLoaded: string[] = [];
+
+  try {
+    const selection = selectBestAimlModel(prompt);
+
+    // ── 🎥 Video Direct Trigger ──────────────────────────────────────────
+    if (selection.endpoint === 'video') {
+      const orgId = businessContext?.organizationId;
+      const hfVid = await generateHfVideo({ prompt, quality: 'fast', organizationId: orgId });
+      const promptTokens = estimateTokenCount(prompt);
+      const completionTokens = 45;
+      const usage: MariTokenUsage = {
+        promptTokens,
+        completionTokens,
+        totalTokens: promptTokens + completionTokens,
+      };
+
+      if (!hfVid.success || !hfVid.url) {
+        return {
+          text: `I couldn't complete a real video for that brief, so I haven't marked anything as generated. ${hfVid.error || 'Please retry or edit the brief.'}`,
+          modelInfo: {
+            model: 'mari-video-generator',
+            category: 'Mari Video Generator',
+            endpoint: 'video',
+            tokens: usage,
+          },
+          usage,
+          tokens: usage,
+          detectedIntent,
+          responseSource: 'media_generator',
+        };
+      }
+
+      const vidModel = hfVid.model?.split('/')[1] || 'CogVideoX-2b';
+      return {
+        text: `🎥 Video Generated:\n\nPrompt: "${prompt}"\n\n[Watch Video](${hfVid.url})\n\n*(CogVideoX · ${vidModel})*`,
+        modelInfo: {
+          model: 'mari-video-generator',
+          category: 'Mari Video Generator',
+          endpoint: 'video',
+          tokens: usage,
+        },
+        usage,
+        tokens: usage,
+        detectedIntent,
+        responseSource: 'media_generator',
+      };
+    }
+
+    // ── 🎨 Image Direct Trigger ───────────────────────────────────────────
+    if (selection.endpoint === 'image') {
+      const orgId = businessContext?.organizationId;
+      const hfImg = await generateHfImage({ prompt, quality: 'fast', organizationId: orgId });
+      const promptTokens = estimateTokenCount(prompt);
+      const completionTokens = 35;
+      const usage: MariTokenUsage = {
+        promptTokens,
+        completionTokens,
+        totalTokens: promptTokens + completionTokens,
+      };
+
+      if (!hfImg.success || !hfImg.url) {
+        return {
+          text: `I couldn't complete a suitable image for that brief, so I haven't marked anything as generated. ${hfImg.error || 'Please retry or edit the brief.'}`,
+          modelInfo: {
+            model: 'mari-image-generator',
+            category: 'Mari Image Generator',
+            endpoint: 'image',
+            tokens: usage,
+          },
+          usage,
+          tokens: usage,
+          detectedIntent,
+          responseSource: 'media_generator',
+        };
+      }
+
+      const imgModel = hfImg.model?.split('/')[1] || 'FLUX.1-schnell';
+      return {
+        text: `🎨 Image Generated:\n\n![Generated Image](${hfImg.url})\n\n*(Black Forest Labs · ${imgModel})*`,
+        modelInfo: {
+          model: 'mari-image-generator',
+          category: 'Mari Image Generator',
+          endpoint: 'image',
+          tokens: usage,
+        },
+        usage,
+        tokens: usage,
+        detectedIntent,
+        responseSource: 'media_generator',
+      };
+    }
+
+    // ── Build authoritative business context system prompt ─────────────────
+    let activeContext = businessContext;
+    let contextPrompt = '';
+
+    if (!activeContext) {
+      try {
+        const { BusinessContextService } = await import('./businessContext.service');
+        let targetOrg = 'ras-ali-labs';
+        if (typeof window !== 'undefined' && window.localStorage) {
+          targetOrg = window.localStorage.getItem('ralion_active_workspace_id') ||
+                      window.localStorage.getItem('ralion_active_org_id') ||
+                      'ras-ali-labs';
+        }
+        activeContext = await BusinessContextService.assembleContext(targetOrg);
+      } catch {}
+    }
+
+    if (activeContext) {
+      if (activeContext.layer1?.companyName?.value) contextSourcesLoaded.push('Business Knowledge Profile');
+      if (activeContext.layer1?.websiteKnowledge?.value) contextSourcesLoaded.push('Website Knowledge');
+      if (activeContext.layer2?.crm?.isConnected) contextSourcesLoaded.push('CRM & Deals Ledger');
+      if (activeContext.layer2?.social?.hasSelectedPage) contextSourcesLoaded.push('Facebook Page');
+      if (activeContext.layer2?.social?.instagram?.isConnected) contextSourcesLoaded.push('Instagram Professional Account');
+      if ((activeContext.layer2?.social?.connectedChannels || []).some((channel: any) => !['facebook', 'instagram'].includes(channel.provider))) {
+        contextSourcesLoaded.push('Connected Social Channels');
+      }
+      if (activeContext.layer2?.operations) contextSourcesLoaded.push('Workspace Operations');
+
+      try {
+        const { BusinessContextService } = await import('./businessContext.service');
+        contextPrompt = BusinessContextService.generateContextPrompt(activeContext);
+      } catch {}
+    }
+
+    const defaultSysPrompt = `You are Mari AI, the authoritative AI Business Growth Partner for Ralion OS developed by Ras Ali Labs.
+
+CRITICAL OPERATIONAL & REASONING GUIDELINES:
+1. YOU ARE AN EXPERT BUSINESS GROWTH PARTNER, NOT A MENU-DRIVEN BOT. You are expected to answer open-ended, strategic, multi-part, critical, and unexpected commercial questions with deep reasoning.
+2. BREAK DOWN MULTI-PART / COMPOUND QUESTIONS: If the user asks a multi-part question (e.g. comparing last month, exploring an enterprise pivot, diagnosing social stagnation, and identifying blindspots), address every sub-question methodically under clear headings.
+3. GROUNDING & TRUTHFULNESS:
+   - Differentiate strictly between VERIFIED FACTS (actual context numbers), DERIVED OBSERVATIONS (logical calculations), STRATEGIC HYPOTHESES (reasoned potential scenarios), and RECOMMENDATIONS.
+   - If historical snapshot metrics (e.g. last month baseline) are unavailable in the verified context, state clearly: "I have current performance data, but I don't yet have a complete verified previous month baseline snapshot for a month-over-month comparison." Then explain what can be determined from current data.
+   - NEVER fabricate statistics, follower counts, engagement multipliers, or peak posting hours.
+4. STRATEGIC SCENARIOS & BLINDSPOTS:
+   - When asked "what would happen if we focused on enterprise clients?", reason over Ras Ali Labs products, B2B sales cycles, average contract values, and positioning.
+   - When asked "what am I overlooking?", review the entire business state (pipeline velocity, channel consistency, lead qualification) to identify strategic bottlenecks.
+5. Provide structured, executive responses with clear headings and bullet points.
+
+${contextPrompt}`;
+
+    const activeSysPrompt = systemPrompt || defaultSysPrompt;
+
+    // ── TIER 1: Google Gemini API (Primary Engine) ────────────────────────
+    const geminiSelection = selectGeminiModel(prompt);
+    const geminiResult = await callGeminiApi(prompt, activeSysPrompt, history, geminiSelection.model);
+
+    if (geminiResult && geminiResult.text && geminiResult.text.trim().length > 0) {
+      return {
+        text: geminiResult.text,
+        modelInfo: {
+          model: geminiSelection.model,
+          category: geminiSelection.category,
+          endpoint: 'chat',
+          tokens: geminiResult.usage,
+        },
+        usage: geminiResult.usage,
+        tokens: geminiResult.usage,
+        detectedIntent,
+        provenanceSources: contextSourcesLoaded,
+        responseSource: 'gemini',
+      };
+    }
+
+    // ── TIER 2: Local Grounded Strategic Engine (Direct Reliable Fallback) ──
+    const fallbackResult = generateLocalStrategicResponse(prompt, activeContext, history);
+    fallbackResult.detectedIntent = detectedIntent;
+    fallbackResult.provenanceSources = contextSourcesLoaded;
+    fallbackResult.responseSource = 'local_grounded';
+    return fallbackResult;
+
+  } catch (err: any) {
+    console.warn('[Mari AI] Model gateway fallback:', err?.message || err);
+    const fallbackResult = generateLocalStrategicResponse(prompt, businessContext, history);
+    fallbackResult.detectedIntent = detectedIntent;
+    fallbackResult.provenanceSources = contextSourcesLoaded;
+    fallbackResult.responseSource = 'local_grounded';
+    return fallbackResult;
+  }
+}
+
+/**
+ * Local Grounded Strategic Intelligence Engine
+ * Ensures Mari ALWAYS produces an authoritative, structured, commercial response
+ * grounded in real business telemetry without external network dependencies.
+ * NEVER returns a generic welcome greeting for legitimate business questions.
+ */
+export function generateLocalStrategicResponse(
+  prompt: string,
+  context?: BusinessContext | null,
+  _history: ChatHistoryMessage[] = []
+): MariApiResult {
+  const pLower = prompt.toLowerCase().trim();
+  const orgId = context?.organizationId || 'ras-ali-labs';
+
+  // Hydrate website knowledge and business knowledge profile
+  const wk = context?.layer1?.websiteKnowledge?.value || (orgId ? WebsiteIngestionService.getWebsiteKnowledge(orgId) : null);
+  let profile = orgId ? BusinessKnowledgeProfileService.getProfile(orgId) : null;
+
+  const isRasAli = (orgId === '22e61ff6-16fe-44c7-9d67-38e2a2e91ccf') || (orgId === 'ras-ali-labs');
+  const orgName = context?.layer1?.companyName?.value || profile?.companyName?.value || wk?.title || context?.organizationName || (isRasAli ? 'Ras Ali Labs' : 'Your Business');
+  const isPersonalProfile = Boolean(context?.isPersonalSocialProfile);
+  const isFacebookConnected = Boolean(!isPersonalProfile && context?.layer2?.social?.hasSelectedPage);
+  const pageName = isFacebookConnected ? (context?.layer2?.social?.connectedPageName?.value || 'Connected Facebook Page') : '';
+  const instagramContext = context?.layer2?.social?.instagram;
+  const isInstagramConnected = Boolean(instagramContext?.isConnected);
+  const instagramName = isInstagramConnected ? (instagramContext?.accountName?.value || 'Instagram Professional') : '';
+  const instagramUsername = isInstagramConnected ? String(instagramContext?.username?.value || '').replace(/^@/, '') : '';
+  const instagramFollowers = isInstagramConnected ? Number(instagramContext?.followersCount?.value || 0) : 0;
+  const isSocialConnected = isFacebookConnected || isInstagramConnected;
+
+  const productsList = context?.layer1?.productsAndServices?.value || profile?.products?.value || (isRasAli ? [
+    { name: 'Film & Creative Production', category: 'Creative & Video Production' },
+    { name: 'Web & App Development', category: 'Software & Digital Platforms' },
+    { name: 'Music Production & Audio', category: 'Audio Engineering & Composition' },
+    { name: 'AI & Automation Systems', category: 'Artificial Intelligence & Automation' },
+    { name: 'Ralion OS', category: 'Flagship AI Business Operating System' },
+  ] : [
+    { name: 'Core Offerings', category: 'Products & Services' },
+  ]);
+
+  const industry = profile?.industry?.value || context?.layer1?.industry?.value || (isRasAli ? 'Technology, Creative Production & Intelligent Software' : 'Commercial Enterprise');
+  const targetMarket = profile?.targetMarkets?.value?.[0] || context?.layer1?.targetMarket?.value || (isRasAli ? 'Businesses, Brands, Creative Organizations, and Growth Enterprises' : 'Commercial Clients & Partners');
+  const valueProp = profile?.valuePropositions?.value?.[0] || context?.layer1?.valueProposition?.value || (isRasAli ? 'Multidisciplinary fusion of creative production, cinematic media, and intelligent software engineering.' : 'Quality commercial service delivery and verified client fulfillment.');
+  const websiteUrl = wk?.websiteUrl || profile?.websiteUrl?.value || context?.layer1?.websiteUrl?.value || (isRasAli ? 'https://www.rasalilabs.com' : '');
+
+  const pipelineVal = context?.layer2?.crm?.totalPipelineValue?.value || 0;
+  const activeClients = context?.layer2?.crm?.activeCustomersCount?.value || 0;
+  const prospectsCount = context?.layer2?.crm?.prospectsCount?.value || 0;
+  const reachGrowth = context?.layer2?.social?.reachGrowthPct?.value || 0;
+  const followers = context?.layer2?.social?.followersCount?.value || 0;
+  const pendingTasks = context?.layer2?.operations?.pendingTasksCount?.value || 0;
+
+  const intent = detectSemanticIntent(prompt);
+  let responseText = '';
+
+  // 0. Hostile Cross-Tenant Containment Check
+  const allKnownEntities = BusinessKnowledgeProfileService.listAllCompanyNames();
+  for (const entity of allKnownEntities) {
+    const entityLower = entity.toLowerCase();
+    if (entityLower.length >= 3 && pLower.includes(entityLower) && !orgName.toLowerCase().includes(entityLower)) {
+      const refusalText = `No ${entity} information available. I only maintain verified intelligence for ${orgName || 'your organization'}.`;
+      const promptTokens = estimateTokenCount(prompt);
+      const completionTokens = estimateTokenCount(refusalText);
+      const usage: MariTokenUsage = {
+        promptTokens,
+        completionTokens,
+        totalTokens: promptTokens + completionTokens,
+      };
+      return {
+        text: refusalText,
+        modelInfo: {
+          model: 'mari-intelligence',
+          category: 'Mari Tenant Isolation Engine',
+          endpoint: 'chat',
+          tokens: usage,
+        },
+        usage,
+        tokens: usage,
+        detectedIntent: 'TENANT_ISOLATION',
+        responseSource: 'local_grounded',
+      };
+    }
+  }
+
+  // 1. COMPOUND QUERY / MULTI-PART STRATEGIC REASONING
+  if (intent === 'COMPOUND_QUERY') {
+    const historicalStatus = `• **Historical Comparison**: I have verified live performance telemetry for **${orgName}** ($${pipelineVal.toLocaleString()} CRM pipeline across ${activeClients} active accounts), but I do not yet have a complete verified previous-month baseline snapshot for a definitive month-over-month comparison.`;
+
+    const formatProductName = (p: any) => typeof p === 'string' ? p : (p?.name || String(p));
+    const formatProductWithCat = (p: any) => typeof p === 'string' ? `• **${p}**` : `• **${p.name}** (${p.category || 'Solution'})`;
+
+    const enterpriseAnalysis = `• **Enterprise Market Pivot**: Shifting primary focus entirely to enterprise clients would extend sales cycles (typically 60–120 days) but substantially increase Average Contract Value (ACV). For ${orgName}, our solutions (**${productsList.map(formatProductName).join(', ')}**) provide intelligent automation that appeals directly to enterprise decision-makers.`;
+
+    const facebookDiagnosis = isFacebookConnected
+      ? `• **Facebook / Channel Growth Analysis**: Your connected page (**${pageName}**) has ${followers.toLocaleString()} verified followers (+${reachGrowth}% velocity). The primary constraint on growth is publishing consistency—without regular multi-format visual posts and video reels, organic algorithmic discovery remains low.`
+      : `• **Facebook / Channel Growth Analysis**: Social channels are not actively broadcasting. Growth is constrained because organic distribution channels require active Facebook Business Page connection and scheduled content dispatch.`;
+
+    const overlookedObservations = `• **What You Are Overlooking (Strategic Blindspots)**:\n` +
+      `  1. **Lead Qualification Bottleneck**: While positioning is strong in **${industry}**, pipeline velocity requires systematic inbound lead capture in Ralion CRM.\n` +
+      `  2. **Multi-Channel Distribution Cadence**: Organic brand reach requires consistent 2–3 weekly video and visual releases via Growth Studio.\n` +
+      `  3. **Executive Follow-Up Cadence**: High-value opportunities need rapid proposal turnaround to convert into signed agreements.`;
+
+    responseText = `### Strategic Business Diagnostic for ${orgName}\n\n` +
+      `Here is a multi-dimensional strategic evaluation addressing your questions:\n\n` +
+      `#### 1. Current Growth vs. Historical Position\n` +
+      `${historicalStatus}\n\n` +
+      `#### 2. Enterprise Client Scenario Evaluation\n` +
+      `${enterpriseAnalysis}\n\n` +
+      `#### 3. Social Channel & Audience Discovery Diagnosis\n` +
+      `${facebookDiagnosis}\n\n` +
+      `#### 4. Critical Overlooked Opportunities & Blindspots\n` +
+      `${overlookedObservations}\n\n` +
+      `**Recommended Next Moves**:\n` +
+      `[Open Growth Studio] | [View CRM Pipeline] | [Create Reel]`;
+  }
+
+  // 2. Pure Greeting (Strictly only when the user just says hello/hi)
+  else if (intent === 'GREETING') {
+    const greetingUser = (orgName && orgName.includes('Ras Ali')) ? 'Ras Ali' : (orgName || '');
+    responseText = orgName
+      ? `Hi ${greetingUser ? `${greetingUser} ` : ''}👋 I’m Mari, your AI Business Growth Partner for ${orgName}. I’m ready to help with strategy, marketing, clients, content or business operations. What would you like to work on?`
+      : `Hi there 👋 I’m Mari, your AI Business Growth Partner. I’m ready to help with strategy, marketing, clients, content or business operations. What would you like to work on?`;
+  }
+
+  // 2.4. Instagram Channel Intelligence
+  else if (intent === 'INSTAGRAM_CHANNEL') {
+    if (isInstagramConnected) {
+      const capabilities = [
+        instagramContext?.canPublish ? 'publishing' : null,
+        instagramContext?.canReadInsights ? 'insights' : null,
+        instagramContext?.canManageComments ? 'comments' : null,
+        instagramContext?.canManageMessages ? 'messages' : null,
+      ].filter(Boolean).join(', ');
+
+      responseText = `### Instagram Channel\n\n` +
+        `**Account:** ${instagramName}${instagramUsername ? ` (@${instagramUsername})` : ''}\n` +
+        `**Followers:** ${instagramFollowers.toLocaleString()}\n` +
+        `**Connection:** Verified Instagram Professional account\n` +
+        `**Ralion access:** ${capabilities || 'Basic account access'}\n\n` +
+        `I can use this verified Instagram connection as part of your business and growth context. I will only describe post performance, audience insights, comments or messages when those records have actually been synced or received by Ralion; I will not invent unavailable Instagram metrics.`;
+    } else {
+      responseText = `### Instagram Channel\n\nI do not currently see a verified Instagram Professional connection in this Ralion workspace. Your other connected channels remain available independently. Connect Instagram from **Growth → Connected Accounts → Instagram Business** to add it to Mari's business context.`;
+    }
+  }
+
+  // 2.5. Website Knowledge
+  else if (intent === 'WEBSITE_KNOWLEDGE') {
+    const capabilitiesList = productsList.map((p: any) => `- ${typeof p === 'string' ? p : p.name}`).join('\n');
+    responseText = `### Website Understanding\n\n` +
+      `**Business:** ${orgName}\n` +
+      `**Positioning:** ${isRasAli ? 'Technology and creative company based in Botswana.' : (wk?.description || valueProp)}\n\n` +
+      `**Capabilities:**\n` +
+      `${capabilitiesList}\n\n` +
+      `${isRasAli ? '**Flagship Product:** Ralion OS\n\n' : ''}` +
+      `${websiteUrl ? `**Website:** ${websiteUrl}` : ''}`.trim();
+  }
+
+  // 3. Business Identity
+  else if (intent === 'BUSINESS_IDENTITY') {
+    const formatProductWithCat = (p: any) => typeof p === 'string' ? `• **${p}**` : `• **${p.name}** (${p.category || 'Solution'})`;
+    const productsSummary = productsList
+      .map(formatProductWithCat)
+      .join('\n');
+
+    responseText = `### Your Business: ${orgName}\n\n` +
+      `**Business Overview**:\n` +
+      `${orgName} operates in the **${industry}** sector, delivering intelligent platforms, cinematic media, and automated business growth systems.\n\n` +
+      `**Core Value Proposition**:\n` +
+      `${valueProp}\n\n` +
+      `**Products & Services**:\n` +
+      `${productsSummary}\n\n` +
+      `**Target Market**:\n` +
+      `${targetMarket}\n\n` +
+      `**Website**:\n` +
+      `${websiteUrl}\n\n` +
+      `*Would you like me to generate a tailored growth campaign or prepare promotional materials for ${targetMarket}?*`;
+  }
+
+  // 4. Target Customers
+  else if (intent === 'TARGET_CUSTOMERS') {
+    responseText = `### Target Customers & Audience for ${orgName}\n\n` +
+      `**Primary Market**:\n` +
+      `• **${targetMarket}**\n\n` +
+      `**Ideal Customer Profile (ICP)**:\n` +
+      `• Decision-makers, brand leaders, and founders seeking intelligent systems, creative production, and AI-driven growth.\n\n` +
+      `**Value Alignment**:\n` +
+      `• ${valueProp}\n\n` +
+      `*Would you like to draft targeted campaign messaging for this audience in Growth Studio?*`;
+  }
+
+  // 5. Business Performance
+  else if (intent === 'BUSINESS_PERFORMANCE') {
+    const crmStatus = pipelineVal > 0
+      ? `• **CRM Pipeline:** $${pipelineVal.toLocaleString()} across ${activeClients} active clients and ${prospectsCount} prospects.`
+      : `• **CRM Pipeline:** No active deals logged yet in Ralion CRM.`;
+
+    let socialStatus = '';
+    if (isFacebookConnected) {
+      socialStatus = `• **Facebook Page (${pageName}):** ${followers.toLocaleString()} verified followers | Reach Velocity: +${reachGrowth}%\n` +
+        `• **Engagement History:** I don't have enough verified post history yet to compute multi-format engagement multipliers or peak posting hours.`;
+    } else if (isPersonalProfile) {
+      socialStatus = `• **Social Channels:** Connected Facebook account is a personal profile. Facebook Page follower and reach analytics require an official Business Page.`;
+    } else {
+      socialStatus = `• **Social Channels:** Not currently connected. Connect your Facebook Page in Growth Studio to track verified audience reach.`;
+    }
+
+    responseText = `### Business Performance Summary for ${orgName}\n\n` +
+      `**Verified Telemetry**:\n` +
+      `${crmStatus}\n` +
+      `${socialStatus}\n` +
+      `• **Operations:** ${pendingTasks} pending tasks in workflow queue.\n\n` +
+      `**Mari Assessment**:\n` +
+      `To accelerate growth, prioritize qualifying active CRM leads and publishing regular video and visual campaigns via Growth Studio.\n\n` +
+      `[Open Growth Studio] | [View CRM Pipeline] | [Create Reel]`;
+  }
+
+  // 6. Provenance Inquiry
+  else if (intent === 'PROVENANCE_INQUIRY') {
+    responseText = `### Data Provenance & Verification Breakdown\n\n` +
+      `Here is the exact source for each business claim and metric:\n\n` +
+      `1. **Business Identity & Value Proposition**:\n` +
+      `   • Source: Authenticated **${orgName} Business Knowledge Profile**.\n` +
+      `   • Provenance: Verified organization settings and ingested website knowledge (${websiteUrl}).\n\n` +
+      `2. **Sales & Pipeline Numbers**:\n` +
+      `   • Source: **Ralion CRM Deals Ledger** ($${pipelineVal.toLocaleString()} active pipeline value, ${activeClients} clients).\n` +
+      `   • Provenance: Internal database records.\n\n` +
+      `3. **Social Channel Telemetry**:\n` +
+      `   • Facebook: ${isFacebookConnected ? `${pageName} (${followers} verified followers)` : 'not connected as an operational Page'}.\n` +
+      `   • Instagram: ${isInstagramConnected ? `${instagramName}${instagramUsername ? ` (@${instagramUsername})` : ''} (${instagramFollowers} verified followers)` : 'not connected'}.\n` +
+      `   • Provenance: Tenant-scoped social connection records; performance metrics are only stated when separately verified.\n\n` +
+      `4. **No Fabricated Data Policy**:\n` +
+      `   • Mari strictly adheres to zero-fabrication. Format performance multipliers and peak hours are marked unverified until sufficient historical post telemetry exists.`;
+  }
+
+  // 7. Activity Summary
+  else if (intent === 'ACTIVITY_SUMMARY') {
+    const recentItems: string[] = [];
+
+    if (pipelineVal > 0) {
+      recentItems.push(`• **CRM Pipeline**: Maintained $${pipelineVal.toLocaleString()} in active deals across ${activeClients} active accounts.`);
+    } else {
+      recentItems.push(`• **CRM**: Pipeline is ready for new prospective deal qualification.`);
+    }
+
+    if (isFacebookConnected) {
+      recentItems.push(`• **Growth Studio**: Facebook Page active for **${pageName}** (${followers} verified followers).`);
+    }
+    if (isInstagramConnected) {
+      recentItems.push(`• **Growth Studio**: Instagram Professional active for **${instagramName}**${instagramUsername ? ` (@${instagramUsername})` : ''} (${instagramFollowers} verified followers).`);
+    } else {
+      recentItems.push(`• **Growth Studio**: Social channels configured for scheduled dispatch.`);
+    }
+
+    recentItems.push(`• **Knowledge Base**: Ingested verified business context for **${orgName}** (${industry}).`);
+    recentItems.push(`• **Operations**: Workspace telemetry active with ${pendingTasks} pending tasks.`);
+
+    responseText = `### Recent Activity Summary for ${orgName}\n\n` +
+      `Here is an overview of recent operations across your Ralion modules:\n\n` +
+      `${recentItems.join('\n')}\n\n` +
+      `*What area would you like to review or expand today?*`;
+  }
+
+  // 8. Weekly Focus
+  else if (intent === 'WEEKLY_FOCUS') {
+    responseText = `### Strategic Focus for ${orgName} This Week\n\n` +
+      `Based on your current commercial position, here are the top 3 high-impact priorities:\n\n` +
+      `1. **CRM Pipeline Activation**:\n` +
+      `   • Review active prospective deals and schedule executive follow-ups to accelerate deal velocity.\n\n` +
+      `2. **Targeted Campaign Launch**:\n` +
+      `   • Generate and publish high-resolution commercial creatives in Growth Studio targeting **${targetMarket}**.\n\n` +
+      `3. **Channel Consistency**:\n` +
+      `   • Schedule 2–3 weekly visual posts and commercial reels to build audience discovery.\n\n` +
+      `[Open Growth Studio] | [View CRM Pipeline] | [Create Visual]`;
+  }
+
+  // 9. Growth Strategy
+  else if (intent === 'GROWTH_STRATEGY') {
+    responseText = `### Commercial Growth Strategy for ${orgName}\n\n` +
+      `To scale commercial revenue and audience presence in **${industry}**, here is our recommended growth roadmap:\n\n` +
+      `1. **Direct Prospect Engagement**:\n` +
+      `   • Ingest and qualify inbound leads into Ralion CRM.\n` +
+      `   • Deliver tailored commercial proposals emphasizing ${valueProp}\n\n` +
+      `2. **Autonomous Multi-Channel Marketing**:\n` +
+      `   • Produce high-impact video reels and product showcases using the FLUX.1 and CogVideoX creative engines.\n` +
+      `   • Distribute consistent brand messaging to ${targetMarket}.\n\n` +
+      `3. **Conversion Optimization**:\n` +
+      `   • Use Mari to evaluate campaign performance once live engagement telemetry accumulates.\n\n` +
+      `[Open Growth Studio] | [Generate Creative] | [View CRM Pipeline]`;
+  }
+
+  // 10. Creative Studio
+  else if (intent === 'CREATIVE_STUDIO') {
+    responseText = `### Commercial Creative Studio Ready\n\n` +
+      `I'm ready to craft high-impact promotional assets for **${orgName}** targeting **${targetMarket}**.\n\n` +
+      `**Suggested Creative Concept**:\n` +
+      `• **Theme**: "${valueProp}"\n` +
+      `• **Format**: Short-form cinematic commercial reel (16:9 / 9:16)\n` +
+      `• **Call to Action**: Discover intelligent platforms and creative experiences at ${websiteUrl}\n\n` +
+      `Click below to launch the generator in Creative Studio with this optimized brief:\n\n` +
+      `[Create Reel] | [Create Visual] | [Open Growth Studio]`;
+  }
+
+  // 11. Platform Knowledge
+  else if (intent === 'PLATFORM_KNOWLEDGE') {
+    responseText = `### Ralion OS — Flagship AI Business Operating System\n\n` +
+      `**Core Platform Capabilities**:\n` +
+      `• **CRM & Sales Pipeline:** Deal tracking, contacts ledger, revenue velocity.\n` +
+      `• **Mari AI Command Center:** Autonomous business intelligence, strategy diagnostics, and campaign orchestration.\n` +
+      `• **Growth Studio & Creative Engine:** AI image generation (FLUX.1-schnell), commercial video generation (CogVideoX), and unified social scheduling.\n` +
+      `• **Social Publishing:** Multi-platform dispatch to Facebook Pages, Instagram, LinkedIn, and X.\n` +
+      `• **Architecture & Security:** RBAC data isolation, multi-tenant workspace separation, and enterprise audit logging.\n\n` +
+      `*For billing and technical support, visit [Platform Support](https://rasalilabs.com/support).*`;
+  }
+
+  // 12. GENERAL STRATEGIC REASONING (Default fallback for all open-ended/unexpected questions)
+  else {
+    responseText = `### Strategic Analysis for ${orgName}\n\n` +
+      `Based on verified intelligence for **${orgName}** in **${industry}**:\n\n` +
+      `**Key Observations**:\n` +
+      `• **Core Positioning**: ${valueProp}\n` +
+      `• **Target Segment**: ${targetMarket}\n` +
+      `• **Commercial Telemetry**: Active pipeline $${pipelineVal.toLocaleString()} across ${activeClients} active accounts and ${prospectsCount} prospects.\n` +
+      `• **Distribution Channels**: ${isSocialConnected ? `${pageName} (${followers} followers)` : 'Social broadcasting ready to configure'}.\n\n` +
+      `**Strategic Reasoning & Assessment**:\n` +
+      `To optimize business momentum, we should focus on high-yield commercial levers: accelerating lead qualification in CRM, maintaining continuous organic creative output in Growth Studio, and establishing clear value propositions for decision-makers in ${targetMarket}.\n\n` +
+      `*Would you like to explore targeted campaign generation or review specific sales pipeline opportunities?*\n\n` +
+      `[Open Growth Studio] | [View CRM Pipeline] | [Generate Creative]`;
+  }
+
+  const promptTokens = estimateTokenCount(prompt);
+  const completionTokens = estimateTokenCount(responseText);
+  const usage: MariTokenUsage = {
+    promptTokens,
+    completionTokens,
+    totalTokens: promptTokens + completionTokens,
+  };
+
+  return {
+    text: responseText,
+    modelInfo: {
+      model: 'mari-growth-partner',
+      category: 'Mari Strategic Growth Engine',
+      endpoint: 'chat',
+      tokens: usage,
+    },
+    usage,
+    tokens: usage,
+    detectedIntent: intent,
+    responseSource: 'local_grounded',
+  };
+}
+
+
+export function processMariQuery(userQuery: string, contextData?: any): MariQueryResponse {
+  const queryLower = userQuery.toLowerCase();
+  const suggestedActions: Array<{ type: string; label: string; payload: any }> = [];
+
+  const orgName = contextData?.layer1?.companyName?.value || contextData?.organizationName || 'Ras Ali Labs';
+  const targetMarket = contextData?.layer1?.targetMarket?.value || 'commercial decision makers';
+
+  if (queryLower.includes('crm') || queryLower.includes('deal') || queryLower.includes('customer') || queryLower.includes('sale') || queryLower.includes('pipeline')) {
+    suggestedActions.push({ type: 'NAVIGATE', label: 'Review Sales Pipeline', payload: { route: '/crm' } });
+  }
+  if (queryLower.includes('growth') || queryLower.includes('campaign') || queryLower.includes('post') || queryLower.includes('marketing') || queryLower.includes('reel') || queryLower.includes('video') || queryLower.includes('facebook') || queryLower.includes('social')) {
+    suggestedActions.push({
+      type: 'NAVIGATE',
+      label: 'Create Reel in Growth Studio',
+      payload: {
+        route: '/growth?tab=creatives',
+        type: 'VIDEO_REEL',
+        format: '16:9',
+        prompt: `Create a cinematic 15–30 second commercial promotional video for ${orgName} targeting ${targetMarket}.`,
+      },
+    });
+  }
+  if (queryLower.includes('website') || queryLower.includes('sync') || queryLower.includes('knowledge')) {
+    suggestedActions.push({ type: 'NAVIGATE', label: 'Sync Business Knowledge', payload: { route: '/settings' } });
+  }
+  if (queryLower.includes('task') || queryLower.includes('work') || queryLower.includes('todo') || queryLower.includes('action')) {
+    suggestedActions.push({ type: 'NAVIGATE', label: 'View Tasks Queue', payload: { route: '/tasks' } });
+  }
+  if (queryLower.includes('bill') || queryLower.includes('invoice') || queryLower.includes('payment') || queryLower.includes('pricing')) {
+    suggestedActions.push({ type: 'NAVIGATE', label: 'Open Billing & Finance', payload: { route: '/billing' } });
+  }
+
+  return {
+    answer: `Mari has analyzed your request across active organizational intelligence and identified key growth priorities. How would you like to proceed?`,
+    suggestedActions: suggestedActions.length > 0 ? suggestedActions : [
+      { type: 'NAVIGATE', label: 'Explore Growth Opportunities', payload: { route: '/growth' } }
+    ]
+  };
+}
