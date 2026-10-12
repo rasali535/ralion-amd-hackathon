@@ -3,6 +3,7 @@ import 'server-only';
 import { createServerClient } from '@supabase/ssr';
 import { createClient as createSupabaseClient, type SupabaseClient } from '@supabase/supabase-js';
 import { cookies } from 'next/headers';
+import { assertNotProductionEndpoint } from '@ralion/core';
 
 /** Cookie-aware client for Server Components and Route Handlers. */
 export async function createClient() {
@@ -43,7 +44,9 @@ export interface PrivilegedSupabaseKey {
 }
 
 export function resolveSupabaseUrl(): string {
-  return process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || CANONICAL_SUPABASE_URL;
+  const url = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || CANONICAL_SUPABASE_URL;
+  assertNotProductionEndpoint(url, 'Server Supabase URL');
+  return url;
 }
 
 /**
@@ -70,7 +73,9 @@ export function resolvePrivilegedSupabaseKey(): PrivilegedSupabaseKey {
     throw error;
   }
 
-  return { source: selected[0], key: selected[1]!.trim() };
+  const trimmedKey = selected[1]!.trim();
+  assertNotProductionEndpoint(trimmedKey, `Server Supabase Key (${selected[0]})`);
+  return { source: selected[0], key: trimmedKey };
 }
 
 let privilegedClient: SupabaseClient | null = null;

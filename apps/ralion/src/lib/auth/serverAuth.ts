@@ -238,6 +238,29 @@ export async function resolveRalionAuthContext(
 
   // If in demo mode or demo token supplied, return isolated synthetic context
   if (token === 'demo-token' || token === 'demo-jwt-token' || (isDemoEnvironment() && (!token || token.startsWith('demo-')))) {
+    const requestedWorkspaceRaw = request.headers.get('x-workspace-id');
+    const requestedOrgRaw = request.headers.get('x-organization-id');
+
+    // Demo access must not bypass tenant permission boundaries or access external tenants
+    if (requestedWorkspaceRaw && requestedWorkspaceRaw !== DEMO_RALION_CONTEXT.workspace.id) {
+      return {
+        status: 'FORBIDDEN',
+        context: null,
+        errorCode: 'WORKSPACE_ACCESS_DENIED',
+        errorMessage: 'Demo authentication cannot access external tenant workspaces.',
+        httpStatus: 403,
+      };
+    }
+    if (requestedOrgRaw && requestedOrgRaw !== DEMO_RALION_CONTEXT.organization.id) {
+      return {
+        status: 'FORBIDDEN',
+        context: null,
+        errorCode: 'FORBIDDEN',
+        errorMessage: 'Demo authentication cannot access external tenant organizations.',
+        httpStatus: 403,
+      };
+    }
+
     return {
       status: 'CONTEXT_RESOLVED',
       context: DEMO_RALION_CONTEXT,

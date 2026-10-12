@@ -40,3 +40,4 @@ export {
 } from './mariChat';
 export * from './mariUniversalCore';
 export * from './amdInference.service';
+export * from './amdTokenFactory.service';

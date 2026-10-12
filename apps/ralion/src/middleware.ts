@@ -1,6 +1,9 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { getCorsHeaders, handleCorsPreflight } from '@/lib/cors';
+import { validateHackathonEnvironmentIsolation } from '@ralion/core';
+
+validateHackathonEnvironmentIsolation();
 
 function publicWidgetCorsHeaders(request: NextRequest): Record<string, string> {
   const origin = String(request.headers.get('origin') || '').trim();

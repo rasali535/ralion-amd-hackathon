@@ -9,8 +9,13 @@ import {
   AiJobRecord 
 } from './schema';
 
+import { assertNotProductionEndpoint } from '@ralion/core';
+
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || 'http://localhost:54321';
 const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY || 'public-anon-key-placeholder';
+
+assertNotProductionEndpoint(SUPABASE_URL, 'Database Supabase URL');
+assertNotProductionEndpoint(SUPABASE_ANON_KEY, 'Database Supabase Key');
 
 export const supabase: SupabaseClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
   auth: {

@@ -1,5 +1,7 @@
 import { createClient as createSupabaseClient, SupabaseClient, Session } from '@supabase/supabase-js';
 
+import { assertNotProductionEndpoint } from '@ralion/core';
+
 // Global singleton instance — prevents multiple GoTrueClient instances across
 // Webpack chunks, hot module reloads, and micro-frontends from competing on the same localStorage auth key.
 declare global {
@@ -29,7 +31,9 @@ function isDesktopRuntime(): boolean {
 }
 
 function resolveSupabaseUrl(): string {
-  return process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL || CANONICAL_SUPABASE_URL;
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL || CANONICAL_SUPABASE_URL;
+  assertNotProductionEndpoint(url, 'Browser Supabase URL');
+  return url;
 }
 
 function pruneLegacyStorageKeys(): void {
@@ -86,6 +90,9 @@ function getOrCreateBrowserClient(): SupabaseClient {
       '[ClientSupabase] Missing Supabase client key. Neither NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY nor NEXT_PUBLIC_SUPABASE_ANON_KEY is configured.'
     );
   }
+
+  assertNotProductionEndpoint(supabaseUrl, 'Browser Supabase URL');
+  assertNotProductionEndpoint(supabaseKey, 'Browser Supabase Key');
 
   const instance = createSupabaseClient(supabaseUrl, supabaseKey, {
     auth: {
