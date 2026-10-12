@@ -141,6 +141,25 @@ async function main() {
   assert.strictEqual(bpRes.rows[0].business_name, 'Kalahari & Okavango Wilderness Expeditions');
   console.log(`      ✓ Verified business profile: "${bpRes.rows[0].business_name}" (${bpRes.rows[0].industry})`);
 
+  // Verify security_audit_logs SELECT policy requires non-null workspace AND membership
+  console.log('      Testing security_audit_logs RLS policy (workspace_id IS NOT NULL)...');
+  await db.exec(`
+    INSERT INTO public.security_audit_logs (id, workspace_id, action, resource)
+    VALUES
+      ('audit-null-workspace', NULL, 'SYSTEM_EVENT', 'SYSTEM'),
+      ('audit-valid-workspace', '${demoWorkspaceId}', 'LOGIN_EVENT', 'AUTH')
+    ON CONFLICT (id) DO NOTHING;
+  `);
+
+  const auditRes = await db.query(`
+    SELECT id, workspace_id, action FROM public.security_audit_logs
+    WHERE (workspace_id IS NOT NULL AND public.is_workspace_member(workspace_id));
+  `);
+  const visibleAuditIds = auditRes.rows.map((r) => r.id);
+  assert.ok(visibleAuditIds.includes('audit-valid-workspace'), 'Must see audit log with valid workspace membership');
+  assert.ok(!visibleAuditIds.includes('audit-null-workspace'), 'Must NOT see audit log with NULL workspace_id');
+  console.log('      ✓ Verified security_audit_logs SELECT policy strictly requires non-null workspace and membership.');
+
   // Step 5: Verify cross-tenant isolation (unauthorized stranger cannot read)
   console.log('\n[5/5] Testing cross-tenant isolation guardrails (unauthorized stranger)...');
   await db.exec(`

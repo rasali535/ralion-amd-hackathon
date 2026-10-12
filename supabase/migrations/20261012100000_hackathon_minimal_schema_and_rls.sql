@@ -413,7 +413,7 @@ BEGIN
   -- 16. Security Audit Logs
   IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE tablename = 'security_audit_logs' AND policyname = 'sal_member_select') THEN
     CREATE POLICY sal_member_select ON public.security_audit_logs FOR SELECT USING (
-      workspace_id IS NULL OR public.is_workspace_member(workspace_id)
+      workspace_id IS NOT NULL AND public.is_workspace_member(workspace_id)
     );
   END IF;
 END $$;
