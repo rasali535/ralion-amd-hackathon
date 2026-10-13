@@ -42,6 +42,12 @@ export async function GET(request: NextRequest) {
       request
     );
   } catch (error: any) {
+    // Keep secrets out of HTTP responses; write a bounded server-side category.
+    console.error('[AMDMonitoring] Provider overview failed', {
+      name: String(error?.name || 'Error').slice(0, 80),
+      code: String(error?.code || 'UNKNOWN').slice(0, 80),
+      status: Number(error?.status || 0),
+    });
     return corsJsonResponse(
       {
         success: false,
