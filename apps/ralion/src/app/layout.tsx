@@ -6,8 +6,8 @@ import { DesktopNetworkBootstrap } from '@/components/DesktopNetworkBootstrap';
 import './globals.css';
 
 export const metadata = {
-  title: 'Ralion Platform — Empowered to Prosper | Ras Ali Labs',
-  description: 'An AI-powered business operating system by Ras Ali Labs that helps organizations manage operations, automate workflows, connect with customers, and grow. Empowered to Prosper.',
+  title: 'Ralion Adaptive — AMD Developer Hackathon ACT III',
+  description: 'One business. Infinite possibilities. Explore Ralion Adaptive, an AMD-powered AI marketing experience by Ras Ali Labs, Botswana.',
   icons: {
     icon: '/assets/images/logo.png',
     shortcut: '/favicon.ico',
