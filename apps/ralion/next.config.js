@@ -97,6 +97,12 @@ const nextConfig = {
         basePath: false,
       },
       {
+        source: '/explore',
+        destination: '/ralion/explore',
+        permanent: false,
+        basePath: false,
+      },
+      {
         source: '/mari-ai',
         destination: '/ralion/mari-ai',
         permanent: false,
