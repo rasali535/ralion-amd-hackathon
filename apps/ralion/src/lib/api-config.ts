@@ -73,6 +73,16 @@ export function getRalionApiUrl(path: string): string {
   if (base.endsWith('/ralion') && normalizedPath.startsWith('/ralion/')) {
     return `${base}${normalizedPath.substring(7)}`;
   }
+  // The standalone AMD hackathon is deployed below Next's /ralion basePath.
+  // Its legacy dashboard modules still call absolute /api/*; route them to
+  // this deployment before making the request, instead of depending on a
+  // redirect which can strip bearer auth headers on some intermediaries.
+  if (typeof window !== 'undefined' &&
+      window.location.pathname.startsWith('/ralion') &&
+      !base.endsWith('/ralion') &&
+      normalizedPath.startsWith('/api/')) {
+    return `${base}/ralion${normalizedPath}`;
+  }
   return `${base}${normalizedPath}`;
 }
 
