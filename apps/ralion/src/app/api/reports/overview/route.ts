@@ -51,6 +51,17 @@ export async function GET(request: NextRequest) {
       supabase.from('social_connections').select('id,provider,connection_status,token_status').eq('organization_id', organizationId),
     ]);
 
+    // The AMD hackathon imports only the synthetic campaign schema.
+    // Missing operational CRM/billing tables must be reported as unavailable,
+    // never represented as live zero metrics or an unexplained server crash.
+    const results = [customersRes, dealsRes, tasksRes, eventsRes, docsRes, workflowsRes, runsRes, walletRes, subRes, socialRes];
+    if (results.some((result) => (result as any).error?.code === '42P01' || (result as any).error?.code === 'PGRST205')) {
+      return corsJsonResponse({
+        success: false,
+        error: 'DEMO_REPORTS_NOT_PROVISIONED',
+        message: 'Operational CRM and billing reporting is not part of this synthetic hackathon workspace. Use the guided safari campaign experience or AMD Monitoring.',
+      }, { status: 503 }, request);
+    }
     for (const result of [customersRes, dealsRes, tasksRes, eventsRes, docsRes, workflowsRes, runsRes, walletRes, subRes, socialRes]) {
       if ((result as any).error) throw new Error((result as any).error.message);
     }
