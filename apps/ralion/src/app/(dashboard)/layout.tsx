@@ -23,7 +23,7 @@ const MariVoiceControl = dynamic(
   { ssr: false }
 );
 
-export default function DashboardLayout({
+function AuthenticatedDashboardLayout({
   children,
 }: {
   children: React.ReactNode;
@@ -161,7 +161,7 @@ export default function DashboardLayout({
             orgName={organizationName}
             tier={displayTier}
             isPlatformAdmin={isPlatformAdmin}
-            platformUrl={process.env.NEXT_PUBLIC_RASALI_PLATFORM_URL || 'https://rasalilabs.com'}
+            platformUrl="/"
             isCollapsed={isSidebarCollapsed}
             onToggleCollapse={() => setIsSidebarCollapsed(prev => !prev)}
             onNavigate={handleNavigate}
@@ -182,7 +182,7 @@ export default function DashboardLayout({
                 orgName={organizationName}
                 tier={displayTier}
                 isPlatformAdmin={isPlatformAdmin}
-                platformUrl={process.env.NEXT_PUBLIC_RASALI_PLATFORM_URL || 'https://rasalilabs.com'}
+                platformUrl="/"
                 isCollapsed={false}
                 onNavigate={handleNavigate}
                 onOpenMariAI={() => {
@@ -206,15 +206,8 @@ export default function DashboardLayout({
             isAdmin={isPlatformAdmin}
             activeBranch={branchName}
             unreadNotifications={0}
-            exitUrl={process.env.NEXT_PUBLIC_RASALI_PLATFORM_URL || 'https://rasalilabs.com'}
-            onExit={() => {
-              const platformUrl = process.env.NEXT_PUBLIC_RASALI_PLATFORM_URL || 'https://rasalilabs.com';
-              if (isDesktopRuntime && (window as any).ralionDesktop?.openExternal) {
-                void (window as any).ralionDesktop.openExternal(platformUrl);
-                return;
-              }
-              window.location.href = platformUrl;
-            }}
+            exitUrl="/"
+            onExit={() => { router.push('/'); }}
             onOpenAdmin={() => {
               handleNavigate('/ralion/admin');
             }}
@@ -265,4 +258,14 @@ export default function DashboardLayout({
       </div>
     </ProductAccessGuard>
   );
+}
+
+
+/** The public hackathon home must not initialize workspace UI or its access guard. */
+export default function DashboardLayout({ children }: { children: React.ReactNode }) {
+  const pathname = usePathname();
+  if (pathname === '/' || pathname === '/ralion' || pathname === '/ralion/') {
+    return <>{children}</>;
+  }
+  return <AuthenticatedDashboardLayout>{children}</AuthenticatedDashboardLayout>;
 }
