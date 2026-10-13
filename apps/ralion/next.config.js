@@ -154,6 +154,14 @@ const nextConfig = {
         basePath: false,
       },
       {
+        // Older dashboard components use a root-absolute logo URL even though
+        // this Next app is deployed with basePath /ralion.
+        source: '/logo.png',
+        destination: '/ralion/assets/images/logo.png',
+        permanent: false,
+        basePath: false,
+      },
+      {
         source: '/_next/:path*',
         destination: '/ralion/_next/:path*',
         permanent: false,
