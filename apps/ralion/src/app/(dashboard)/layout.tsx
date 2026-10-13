@@ -264,7 +264,7 @@ function AuthenticatedDashboardLayout({
 /** The public hackathon home must not initialize workspace UI or its access guard. */
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
-  if (pathname === '/' || pathname === '/ralion' || pathname === '/ralion/' || pathname === '/explore' || pathname === '/ralion/explore') {
+  if (pathname === '/' || pathname === '/ralion' || pathname === '/ralion/' || pathname === '/explore' || pathname === '/ralion/explore' || pathname === '/judge-access' || pathname === '/ralion/judge-access') {
     return <>{children}</>;
   }
   return <AuthenticatedDashboardLayout>{children}</AuthenticatedDashboardLayout>;

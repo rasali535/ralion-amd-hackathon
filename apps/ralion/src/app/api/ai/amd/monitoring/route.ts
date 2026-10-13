@@ -1,3 +1,4 @@
+import { reserveHackathonInference } from '@/lib/amd/hackathonQuota';
 import { NextRequest } from 'next/server';
 import { resolveRalionAuthContext } from '@/lib/auth/serverAuth';
 import { corsJsonResponse, handleCorsPreflight } from '@/lib/cors';
@@ -234,6 +235,26 @@ export async function POST(request: NextRequest) {
     const moduleTag: AmdInitiatingModule = ['mari', 'growth', 'creative', 'monitoring_test'].includes(body?.module)
       ? body.module
       : 'monitoring_test';
+
+    // The central quota is applied immediately before the real provider call.
+    // Never trust client-side counters or a per-instance Map for Vercel billing protection.
+    let budget;
+    try {
+      budget = await reserveHackathonInference(auth.context.user.id);
+    } catch {
+      return corsJsonResponse(
+        { success: false, error: 'INFERENCE_BUDGET_UNAVAILABLE', message: 'Demo AI is temporarily unavailable. Please try again later.' },
+        { status: 503 },
+        request
+      );
+    }
+    if (!budget.allowed) {
+      return corsJsonResponse(
+        { success: false, error: 'DAILY_AI_LIMIT_REACHED', message: 'This demo has reached its daily AI allowance. You can still explore the campaign walkthrough.', remaining: budget.remaining, resetAt: budget.resetAt },
+        { status: 429, headers: { 'Retry-After': '3600' } },
+        request
+      );
+    }
 
     const result = await AmdTokenFactoryService.createChatCompletion({
       model: body?.model,

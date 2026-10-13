@@ -103,6 +103,12 @@ const nextConfig = {
         basePath: false,
       },
       {
+        source: '/judge-access',
+        destination: '/ralion/judge-access',
+        permanent: false,
+        basePath: false,
+      },
+      {
         source: '/mari-ai',
         destination: '/ralion/mari-ai',
         permanent: false,

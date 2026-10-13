@@ -39,7 +39,7 @@ export default function PublicHackathonHome() {
           </Link>
           <div className="flex items-center gap-3">
             <a href="/explore" className="hidden text-sm text-slate-300 transition hover:text-white sm:block">Explore the experience</a>
-            <Link href="/login" className="rounded-xl border border-white/20 bg-white/10 px-4 py-2.5 text-sm font-semibold transition hover:bg-white/20">Sign in <ArrowRight className="ml-1 inline h-4 w-4" /></Link>
+            <Link href="/judge-access" className="rounded-xl border border-white/20 bg-white/10 px-4 py-2.5 text-sm font-semibold transition hover:bg-white/20">Judge access <ArrowRight className="ml-1 inline h-4 w-4" /></Link>
           </div>
         </nav>
 
@@ -50,7 +50,7 @@ export default function PublicHackathonHome() {
             <p className="mt-7 max-w-xl text-lg leading-relaxed text-slate-300">Turn one business goal into distinctly personal marketing experiences. Ralion Adaptive brings AI reasoning, audience strategy and creative direction into one connected journey.</p>
             <div className="mt-9 flex flex-wrap gap-3">
               <a href="/explore" className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-blue-600 to-violet-600 px-6 py-3.5 font-bold shadow-lg shadow-blue-800/20 transition hover:brightness-110">Launch interactive demo <ArrowRight className="h-5 w-5" /></a>
-              <Link href="/login" className="inline-flex items-center gap-2 rounded-xl border border-slate-600 bg-slate-900/60 px-6 py-3.5 font-semibold transition hover:border-cyan-400">Enter workspace <ShieldCheck className="h-4 w-4" /></Link>
+              <Link href="/login" className="inline-flex items-center gap-2 rounded-xl border border-slate-600 bg-slate-900/60 px-6 py-3.5 font-semibold transition hover:border-cyan-400">Access full demo <ShieldCheck className="h-4 w-4" /></Link>
             </div>
             <p className="mt-5 text-xs text-slate-400">Public experience is read-only. Live AI testing requires authorized sign-in.</p>
           </div>
@@ -87,7 +87,7 @@ export default function PublicHackathonHome() {
 
       <section className="border-y border-white/10 bg-[#0b1220] px-5 py-20 sm:px-8"><div className="mx-auto max-w-7xl"><div className="mb-10 text-center"><p className="text-sm font-bold uppercase tracking-[.2em] text-violet-300">Connected intelligence</p><h2 className="mt-4 text-3xl font-extrabold sm:text-4xl">From brief to audience-ready campaign</h2></div><div className="grid gap-4 md:grid-cols-4">{[{name:'Mari AI',icon:BrainCircuit,desc:'Understand the goal and shape a strategic brief.'},{name:'Growth',icon:TrendingUp,desc:'Adapt positioning and messaging to each audience.'},{name:'Social',icon:Layers3,desc:'Prepare channel-aware drafts with human approval.'},{name:'Creative Studio',icon:Sparkles,desc:'Develop distinctive creative directions.'}].map((step) => <div key={step.name} className="rounded-2xl border border-white/10 bg-white/[.03] p-6"><step.icon className="h-7 w-7 text-cyan-300" /><h3 className="mt-5 text-xl font-bold">{step.name}</h3><p className="mt-3 text-sm leading-relaxed text-slate-400">{step.desc}</p></div>)}</div></div></section>
 
-      <section className="mx-auto flex max-w-7xl flex-col items-start justify-between gap-6 px-5 py-16 sm:px-8 md:flex-row md:items-center"><div><p className="text-sm font-bold uppercase tracking-widest text-cyan-300">Ready to go deeper?</p><h2 className="mt-3 text-3xl font-extrabold">Explore the full Ralion workspace.</h2><p className="mt-3 text-slate-400">Authorized users can access the dashboard, AMD monitoring and application workflows.</p></div><Link href="/login" className="inline-flex shrink-0 items-center gap-2 rounded-xl bg-blue-600 px-6 py-3.5 font-bold hover:bg-blue-500">Sign in to Ralion <ArrowRight className="h-5 w-5" /></Link></section>
+      <section className="mx-auto flex max-w-7xl flex-col items-start justify-between gap-6 px-5 py-16 sm:px-8 md:flex-row md:items-center"><div><p className="text-sm font-bold uppercase tracking-widest text-cyan-300">Ready to go deeper?</p><h2 className="mt-3 text-3xl font-extrabold">Explore the full Ralion workspace.</h2><p className="mt-3 text-slate-400">Authorized users can access the dashboard, AMD monitoring and application workflows.</p></div><Link href="/login" className="inline-flex shrink-0 items-center gap-2 rounded-xl bg-blue-600 px-6 py-3.5 font-bold hover:bg-blue-500">Access full demo <ArrowRight className="h-5 w-5" /></Link></section>
       <footer className="border-t border-white/10 px-5 py-6 text-center text-xs text-slate-500">Ralion Adaptive · An AMD Developer Hackathon ACT III project · Built by Ras Ali Labs in Botswana · Demonstration data is fictional</footer>
     </div>
   );
