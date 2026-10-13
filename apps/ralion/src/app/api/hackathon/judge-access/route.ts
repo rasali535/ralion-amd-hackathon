@@ -27,6 +27,12 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'GUEST_SESSION_REQUIRED' }, { status: 403, headers: noStore });
     }
 
+    // Never try privileged membership writes using a demo placeholder credential.
+    const privilegedKey = process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY;
+    if (!privilegedKey || privilegedKey.startsWith('sb_secret_isolated_demo_mode_key')) {
+      console.error('[HackathonJudgeAccess] Missing real dedicated Supabase server credential.');
+      return NextResponse.json({ error: 'JUDGE_SERVER_CONFIG_REQUIRED' }, { status: 503, headers: noStore });
+    }
     const admin = getPrivilegedSupabase();
     // Never overwrite an existing member's role/profile; admin users stay untouched.
     const { data: existing, error: membershipError } = await admin.from('workspace_members')
@@ -49,7 +55,10 @@ export async function POST(request: NextRequest) {
       if (membershipInsertError && membershipInsertError.code !== '23505') throw membershipInsertError;
     }
     return NextResponse.json({ success: true, next: '/dashboard' }, { headers: noStore });
-  } catch {
+  } catch (error) {
+    // Diagnose server-side failure without exposing secrets or tenant internals to the client.
+    const detail = error instanceof Error ? error.message : String(error);
+    console.error('[HackathonJudgeAccess] Guest enrollment failed:', detail.slice(0, 350));
     return NextResponse.json({ error: 'JUDGE_ENROLMENT_FAILED', message: 'Unable to open the demo workspace right now.' }, { status: 503, headers: noStore });
   }
 }
