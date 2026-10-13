@@ -145,6 +145,15 @@ const nextConfig = {
         basePath: false,
       },
       {
+        // Legacy dashboard fetchers request /api/* while the hackathon app
+        // is hosted beneath Next's /ralion basePath. A 307 keeps method,
+        // body, query and same-origin authorization headers for POST APIs.
+        source: '/api/:path*',
+        destination: '/ralion/api/:path*',
+        permanent: false,
+        basePath: false,
+      },
+      {
         source: '/_next/:path*',
         destination: '/ralion/_next/:path*',
         permanent: false,
