@@ -38,7 +38,7 @@ export default function PublicHackathonHome() {
             <span className="leading-tight"><strong className="block text-lg tracking-[.12em]">RALION <span className="text-cyan-300">ADAPTIVE</span></strong><span className="block text-[10px] uppercase tracking-[.22em] text-slate-400">By Ras Ali Labs · Botswana</span></span>
           </Link>
           <div className="flex items-center gap-3">
-            <a href="#experience" className="hidden text-sm text-slate-300 transition hover:text-white sm:block">Explore the experience</a>
+            <a href="/explore" className="hidden text-sm text-slate-300 transition hover:text-white sm:block">Explore the experience</a>
             <Link href="/login" className="rounded-xl border border-white/20 bg-white/10 px-4 py-2.5 text-sm font-semibold transition hover:bg-white/20">Sign in <ArrowRight className="ml-1 inline h-4 w-4" /></Link>
           </div>
         </nav>
@@ -49,7 +49,7 @@ export default function PublicHackathonHome() {
             <h1 className="max-w-3xl text-5xl font-black leading-[1.07] tracking-tight sm:text-6xl xl:text-7xl">One business.<br /><span className="bg-gradient-to-r from-cyan-300 via-blue-400 to-violet-400 bg-clip-text text-transparent">Infinite possibilities.</span></h1>
             <p className="mt-7 max-w-xl text-lg leading-relaxed text-slate-300">Turn one business goal into distinctly personal marketing experiences. Ralion Adaptive brings AI reasoning, audience strategy and creative direction into one connected journey.</p>
             <div className="mt-9 flex flex-wrap gap-3">
-              <a href="#experience" className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-blue-600 to-violet-600 px-6 py-3.5 font-bold shadow-lg shadow-blue-800/20 transition hover:brightness-110">Explore the guided demo <ArrowRight className="h-5 w-5" /></a>
+              <a href="/explore" className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-blue-600 to-violet-600 px-6 py-3.5 font-bold shadow-lg shadow-blue-800/20 transition hover:brightness-110">Launch interactive demo <ArrowRight className="h-5 w-5" /></a>
               <Link href="/login" className="inline-flex items-center gap-2 rounded-xl border border-slate-600 bg-slate-900/60 px-6 py-3.5 font-semibold transition hover:border-cyan-400">Enter workspace <ShieldCheck className="h-4 w-4" /></Link>
             </div>
             <p className="mt-5 text-xs text-slate-400">Public experience is read-only. Live AI testing requires authorized sign-in.</p>
