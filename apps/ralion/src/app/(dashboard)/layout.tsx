@@ -161,7 +161,7 @@ function AuthenticatedDashboardLayout({
             orgName={organizationName}
             tier={displayTier}
             isPlatformAdmin={isPlatformAdmin}
-            platformUrl={process.env.NEXT_PUBLIC_RASALI_PLATFORM_URL || 'https://rasalilabs.com'}
+            platformUrl="/"
             isCollapsed={isSidebarCollapsed}
             onToggleCollapse={() => setIsSidebarCollapsed(prev => !prev)}
             onNavigate={handleNavigate}
@@ -182,7 +182,7 @@ function AuthenticatedDashboardLayout({
                 orgName={organizationName}
                 tier={displayTier}
                 isPlatformAdmin={isPlatformAdmin}
-                platformUrl={process.env.NEXT_PUBLIC_RASALI_PLATFORM_URL || 'https://rasalilabs.com'}
+                platformUrl="/"
                 isCollapsed={false}
                 onNavigate={handleNavigate}
                 onOpenMariAI={() => {
@@ -206,15 +206,8 @@ function AuthenticatedDashboardLayout({
             isAdmin={isPlatformAdmin}
             activeBranch={branchName}
             unreadNotifications={0}
-            exitUrl={process.env.NEXT_PUBLIC_RASALI_PLATFORM_URL || 'https://rasalilabs.com'}
-            onExit={() => {
-              const platformUrl = process.env.NEXT_PUBLIC_RASALI_PLATFORM_URL || 'https://rasalilabs.com';
-              if (isDesktopRuntime && (window as any).ralionDesktop?.openExternal) {
-                void (window as any).ralionDesktop.openExternal(platformUrl);
-                return;
-              }
-              window.location.href = platformUrl;
-            }}
+            exitUrl="/"
+            onExit={() => { router.push('/'); }}
             onOpenAdmin={() => {
               handleNavigate('/ralion/admin');
             }}
