@@ -105,6 +105,16 @@ export default function DashboardPage() {
         <div><div className="flex items-center gap-2"><h1 className="text-2xl font-black tracking-tight text-white">Ralion Command Centre</h1><Badge variant="success">Live Data</Badge></div><p className="text-xs text-zinc-400 mt-1">{overview ? `${overview.organization.name} · ${overview.workspace.name}` : 'Loading tenant context…'} — Empowered to Prosper.</p></div>
         <div className="flex flex-wrap gap-2"><Button variant="outline" size="sm" onClick={() => void loadOverview()}>Refresh</Button><Button variant="glass" size="sm" onClick={() => setCustomerOpen(true)}><Plus className="w-4 h-4" /> Customer</Button><Button variant="primary" size="sm" onClick={() => setTaskOpen(true)}><Plus className="w-4 h-4" /> Task</Button></div>
       </div>
+      <section className="rounded-2xl border border-cyan-500/25 bg-gradient-to-r from-slate-900 to-sky-950/50 p-5">
+        <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-cyan-300">AMD Developer Hackathon · Interactive evaluation</div>
+        <h2 className="mt-2 text-lg font-bold text-white">Explore the Botswana safari campaign experience</h2>
+        <p className="mt-2 max-w-3xl text-xs leading-relaxed text-slate-300">Compare luxury and adventure audiences, inspect Mari and Growth, then run a genuine AMD provider test in the monitoring centre. The audience walkthrough uses synthetic demo fixtures; the monitoring test explicitly distinguishes live provider responses from simulated results.</p>
+        <div className="mt-4 flex flex-wrap gap-3">
+          <button onClick={() => router.push('/explore')} className="rounded-lg bg-cyan-600 px-4 py-2 text-xs font-bold text-white hover:bg-cyan-500">Start guided experience →</button>
+          <button onClick={() => router.push('/amd-monitoring')} className="rounded-lg border border-cyan-500/30 px-4 py-2 text-xs font-bold text-cyan-200 hover:border-cyan-300">Verify live AMD inference →</button>
+          <button onClick={() => router.push('/mari-ai')} className="rounded-lg border border-slate-600 px-4 py-2 text-xs font-bold text-slate-200 hover:border-slate-400">Open Mari AI →</button>
+        </div>
+      </section>
       {error && <div className="rounded-xl border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-xs text-rose-300">{error}</div>}
       {loading ? <div className="flex items-center justify-center py-24 text-zinc-400"><Loader2 className="w-5 h-5 animate-spin mr-2" /> Loading canonical workspace data…</div> : overview && <>
         <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">

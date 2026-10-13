@@ -21,6 +21,28 @@ export async function GET(request: NextRequest) {
   const includeRecent = searchParams.get('include_recent') === 'true';
 
   try {
+    if (action === 'readiness') {
+      // A read-only provider connection probe. A configured API key or cached
+      // fixture is not evidence of successful real inference.
+      const overview = await AmdTokenFactoryService.getMonitoringOverview(auth.context.workspace.id);
+      const connection = overview.connection;
+      const liveConnection = connection?.status === 'LIVE' && connection?.isFixture === false;
+      return corsJsonResponse({
+        success: true,
+        workspaceId: auth.context.workspace.id,
+        amd: {
+          status: connection?.status || 'OFFLINE',
+          providerReachable: liveConnection,
+          isFixture: Boolean(connection?.isFixture),
+          model: connection?.selectedModel || null,
+          checkedAt: connection?.checkedAt || new Date().toISOString(),
+          latencyMs: connection?.latencyMs ?? null,
+        },
+        inferenceVerified: false,
+        nextStep: 'Run AMD Monitoring POST and confirm isRealAmdInference=true with traceId and token usage.',
+      }, { status: 200, headers: { 'Cache-Control': 'no-store' } }, request);
+    }
+
     if (action === 'monitoring' || action === 'status') {
       const overview = await AmdTokenFactoryService.getMonitoringOverview(auth.context.workspace.id);
       return corsJsonResponse(
