@@ -24,7 +24,14 @@ export default function JudgeAccessPage() {
         headers: { Authorization: `Bearer ${session.access_token}` },
         cache: 'no-store',
       });
-      if (!res.ok) throw new Error('Could not open the demo workspace. Please try again.');
+      if (!res.ok) {
+        // Display only the server's safe diagnostic code. Never echo JWTs, credentials
+        // or internal DB errors into the guest-facing UI.
+        const failure = await res.json().catch(() => ({})) as { error?: string };
+        const allowedCodes = ['JUDGE_SERVER_CONFIG_REQUIRED', 'AUTH_UNAVAILABLE', 'ISOLATION_FAILURE', 'GUEST_SESSION_REQUIRED', 'JUDGE_ENROLMENT_FAILED'];
+        const code = allowedCodes.includes(failure.error || '') ? failure.error : 'UNKNOWN_ERROR';
+        throw new Error(`Demo access failed (${res.status}: ${code}). Please contact the hackathon team.`);
+      }
       window.location.assign('/ralion/dashboard');
     } catch (err: any) {
       setError(err?.message || 'Guest sign-in is temporarily unavailable.');
