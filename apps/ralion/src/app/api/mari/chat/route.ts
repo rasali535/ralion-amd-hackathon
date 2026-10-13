@@ -1,4 +1,6 @@
 import { NextRequest } from 'next/server';
+import { AmdTokenFactoryService } from '@ralion/ai/server';
+import { reserveHackathonInference } from '@/lib/amd/hackathonQuota';
 import { corsJsonResponse, handleCorsPreflight } from '../../../../lib/cors';
 import {
   MariUniversalCore,
@@ -231,6 +233,61 @@ export async function POST(request: NextRequest) {
     }
 
     const cleanQuery = query.trim();
+
+    // Judges are anonymous READ-ONLY guests of the isolated safari workspace.
+    // Bypass the production Google/Gemini wallet, which is intentionally absent
+    // from the hackathon schema. Never bypass the dedicated shared AMD quota.
+    const isJudgeGuest =
+      serverCtx.workspace.id === 'c0000000-0000-0000-0000-000000000001' &&
+      serverCtx.membership?.role === 'viewer';
+    if (isJudgeGuest) {
+      if (cleanQuery.length > 4000) {
+        return corsJsonResponse({ success: false, code: 'CONTENT_LENGTH_EXCEEDED', error: 'Message exceeds 4,000 characters.' }, { status: 400 }, request);
+      }
+      const throttle = AmdTokenFactoryService.checkDistributedRateLimit(serverCtx.workspace.id);
+      if (!throttle.allowed) {
+        return corsJsonResponse({ success: false, code: 'RATE_LIMITED', error: 'Please wait before submitting another message.' }, { status: 429 }, request);
+      }
+      let budget;
+      try {
+        budget = await reserveHackathonInference(serverCtx.user.id);
+      } catch {
+        return corsJsonResponse({ success: false, code: 'INFERENCE_BUDGET_UNAVAILABLE', error: 'AMD inference is temporarily unavailable.' }, { status: 503 }, request);
+      }
+      if (!budget.allowed) {
+        return corsJsonResponse({ success: false, code: 'DAILY_AI_LIMIT_REACHED', error: 'Daily AMD demo allowance reached. You can still explore the guided walkthrough.', resetAt: budget.resetAt }, { status: 429 }, request);
+      }
+      try {
+        const result = await AmdTokenFactoryService.createChatCompletion({
+          messages: [
+            { role: 'system', content: 'You are Mari AI, business growth partner to the fictional Botswana safari company Kalahari & Okavango Wilderness Expeditions. Give concise, practical, Botswana-specific recommendations. The company offers two synthetic example campaigns: luxury Okavango Untamed and adventure Botswana Frontier. Do not invent actual sales, audience research, or social metrics. Identify any assumptions. This is a hackathon demonstration.' },
+            { role: 'user', content: cleanQuery },
+          ],
+          module: 'mari',
+          workspaceId: serverCtx.workspace.id,
+          max_tokens: 600,
+        });
+        return corsJsonResponse({
+          success: true,
+          answer: result.choices?.[0]?.message?.content || '',
+          modelUsed: result.model,
+          modelSucceeded: Boolean(result.isRealAmdInference),
+          responseSource: result.isRealAmdInference ? 'amd_token_factory' : 'amd_fixture',
+          fallbackUsed: Boolean(result.isFixture),
+          isRealAmdInference: Boolean(result.isRealAmdInference),
+          isFixture: Boolean(result.isFixture),
+          traceId: result.traceId,
+          usage: { promptTokens: result.usage?.prompt_tokens || 0, completionTokens: result.usage?.completion_tokens || 0, totalTokens: result.usage?.total_tokens || 0, creditsDeducted: 0 },
+          detectedIntent: 'GROWTH_STRATEGY',
+          capabilityMode: 'BUSINESS',
+          actionsSuggested: [],
+          companyName: 'Kalahari & Okavango Wilderness Expeditions',
+        }, undefined, request);
+      } catch (error: any) {
+        console.error('[HackathonMari] AMD provider request failed', { name: String(error?.name || 'Error').slice(0, 60), status: Number(error?.status || 0) });
+        return corsJsonResponse({ success: false, code: 'AMD_PROVIDER_UNAVAILABLE', error: 'AMD generation is currently unavailable. No simulated response was substituted.' }, { status: 503 }, request);
+      }
+    }
 
     const canonicalWorkspaceId = serverCtx.workspace.id;
     const canonicalTenantId = serverCtx.organization?.id || serverCtx.workspace.organization_id || serverCtx.workspace.id;
