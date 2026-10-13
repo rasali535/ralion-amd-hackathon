@@ -6,7 +6,7 @@ export const dynamic = 'force-dynamic';
 const DEMO_WORKSPACE_ID = 'c0000000-0000-0000-0000-000000000001';
 const HACKATHON_PROJECT = 'uosaqcgfvmxzwpxekoov';
 
-/** Enrols a verified visitor as a non-admin member of the fictional safari workspace. */
+/** Enrols a Supabase-authenticated anonymous guest as a non-admin member of the fictional safari workspace. */
 export async function POST(request: NextRequest) {
   const noStore = { 'Cache-Control': 'no-store' };
   try {
@@ -23,8 +23,8 @@ export async function POST(request: NextRequest) {
     const verifier = createClient(resolveSupabaseUrl(), publicKey, { auth: { persistSession: false, autoRefreshToken: false } });
     const { data, error } = await verifier.auth.getUser(token);
     const user = data.user;
-    if (error || !user || !user.email || !user.email_confirmed_at || user.is_anonymous) {
-      return NextResponse.json({ error: 'VERIFIED_EMAIL_REQUIRED' }, { status: 403, headers: noStore });
+    if (error || !user) {
+      return NextResponse.json({ error: 'GUEST_SESSION_REQUIRED' }, { status: 403, headers: noStore });
     }
 
     const admin = getPrivilegedSupabase();
@@ -38,13 +38,13 @@ export async function POST(request: NextRequest) {
       if (profileLookupError) throw profileLookupError;
       if (!profile) {
         const { error: profileError } = await admin.from('profiles').insert({
-          id: user.id, email: user.email, full_name: user.user_metadata?.full_name || user.email.split('@')[0],
+          id: user.id, email: user.email || `guest-${user.id}@demo.invalid`, full_name: user.is_anonymous ? 'Hackathon Guest' : (user.user_metadata?.full_name || user.email?.split('@')[0] || 'Evaluator'),
           role: 'VIEWER',
         });
         if (profileError && profileError.code !== '23505') throw profileError;
       }
       const { error: membershipInsertError } = await admin.from('workspace_members').insert({
-        workspace_id: DEMO_WORKSPACE_ID, user_id: user.id, role: 'member',
+        workspace_id: DEMO_WORKSPACE_ID, user_id: user.id, role: 'viewer',
       });
       if (membershipInsertError && membershipInsertError.code !== '23505') throw membershipInsertError;
     }
