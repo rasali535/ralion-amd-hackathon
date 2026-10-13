@@ -23,7 +23,7 @@ const MariVoiceControl = dynamic(
   { ssr: false }
 );
 
-export default function DashboardLayout({
+function AuthenticatedDashboardLayout({
   children,
 }: {
   children: React.ReactNode;
@@ -265,4 +265,14 @@ export default function DashboardLayout({
       </div>
     </ProductAccessGuard>
   );
+}
+
+
+/** The public hackathon home must not initialize workspace UI or its access guard. */
+export default function DashboardLayout({ children }: { children: React.ReactNode }) {
+  const pathname = usePathname();
+  if (pathname === '/' || pathname === '/ralion' || pathname === '/ralion/') {
+    return <>{children}</>;
+  }
+  return <AuthenticatedDashboardLayout>{children}</AuthenticatedDashboardLayout>;
 }
