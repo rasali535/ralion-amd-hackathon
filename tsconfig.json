@@ -1,0 +1,36 @@
+{
+  "compilerOptions": {
+    "target": "es2022",
+    "lib": ["dom", "dom.iterable", "esnext"],
+    "allowJs": true,
+    "skipLibCheck": true,
+    "strict": false,
+    "forceConsistentCasingInFileNames": true,
+    "noEmit": true,
+    "esModuleInterop": true,
+    "module": "esnext",
+    "moduleResolution": "node",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "jsx": "preserve",
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["apps/ralion/src/*"],
+      "@ralion/ui": ["packages/ui/src"],
+      "@ralion/ui/*": ["packages/ui/src/*"],
+      "@ralion/core": ["packages/core/src"],
+      "@ralion/core/*": ["packages/core/src/*"],
+      "@ralion/auth": ["packages/auth/src"],
+      "@ralion/auth/*": ["packages/auth/src/*"],
+      "@ralion/database": ["packages/database/src"],
+      "@ralion/database/*": ["packages/database/src/*"],
+      "@ralion/ai": ["packages/ai/src"],
+      "@ralion/ai/*": ["packages/ai/src/*"],
+      "@ralion/integrations": ["packages/integrations/src"],
+      "@ralion/integrations/*": ["packages/integrations/src/*"],
+      "@ralion/modules": ["packages/modules/src"],
+      "@ralion/modules/*": ["packages/modules/src/*"]
+    }
+  },
+  "exclude": ["scripts", "node_modules", "**/dist", "**/.next"]
+}

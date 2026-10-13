@@ -1,0 +1,508 @@
+/**
+ * ============================================================================
+ * AUTHORITATIVE FACEBOOK CONNECTION STATE MACHINE SERVICE
+ * ============================================================================
+ * 
+ * Provides a single, authoritative source of truth for Facebook connection state,
+ * token validity, Meta App issuer verification, permission inspection, Page discovery,
+ * and Page selection across all Ralion OS surfaces.
+ * 
+ * Guarantees:
+ * - 7 mutually exclusive states
+ * - Zero token leakage to clients
+ * - Rejection of stale Meta App tokens
+ * - Strict multi-tenant isolation
+ * - Authoritative disconnect enforcement (no Zernio resurrection)
+ */
+
+import 'server-only';
+import { META_GRAPH_API_VERSION } from '@ralion/integrations/server';
+import { MetaCredentialService } from '../metaCredential.service';
+import { getPrivilegedSupabase as getServiceSupabase } from '@/lib/supabase/server';
+
+export const AUTHORITATIVE_META_APP_ID = '1759273775121373';
+export const AUTHORITATIVE_META_APP_NAME = 'Ralion growth';
+
+export type FacebookConnectionState =
+  | 'DISCONNECTED'
+  | 'PROFILE_CONNECTED_PAGE_ACCESS_UNAVAILABLE'
+  | 'PROFILE_CONNECTED_PAGE_NOT_SELECTED'
+  | 'PAGE_CONNECTED'
+  | 'TOKEN_EXPIRED'
+  | 'REAUTH_REQUIRED'
+  | 'ERROR';
+
+export interface DiscoveredPageSummary {
+  pageId: string;
+  name: string;
+  username?: string;
+  category?: string;
+  followersCount?: number;
+  avatarUrl?: string | null;
+  tasks?: string[];
+}
+
+export interface FacebookConnectionStateResult {
+  state: FacebookConnectionState;
+  provider: 'facebook';
+  tenantId: string;
+  workspaceId: string;
+  userId?: string;
+  userConnectionExists: boolean;
+  tokenValid: boolean;
+  tokenAppId?: string;
+  requiredAppId: string;
+  isStaleAppToken: boolean;
+  facebookUserId?: string;
+  facebookUserName?: string;
+  pagePermissionsGranted: boolean;
+  grantedPermissions: string[];
+  declinedPermissions: string[];
+  availablePagesCount: number;
+  availablePages: DiscoveredPageSummary[];
+  selectedPageId?: string;
+  selectedPageName?: string;
+  selectedPageFollowers?: number;
+  selectedPageCategory?: string;
+  selectedPageAbout?: string;
+  selectedPageWebsite?: string;
+  pageAccessible: boolean;
+  requiresReauth: boolean;
+  reason?: string;
+  statusMessage: string;
+  ctaAction?: 'CONNECT_FACEBOOK' | 'SELECT_FACEBOOK_PAGE' | 'RECONNECT_PAGE_ACCESS' | 'RECONNECT_EXPIRED' | 'MANAGE_PAGE';
+  ctaLabel?: string;
+}
+
+// In-memory short-lived cache (15 seconds) to prevent Meta Graph API rate-limiting during rapid page re-renders
+const stateCache = new Map<string, { result: FacebookConnectionStateResult; cachedAt: number }>();
+const CACHE_TTL_MS = 15_000;
+
+export class FacebookConnectionStateService {
+  /**
+   * Invalidate cached state for a tenant / workspace / user
+   */
+  static invalidateCache(tenantOrWorkspaceId?: string) {
+    if (!tenantOrWorkspaceId) {
+      stateCache.clear();
+      return;
+    }
+    for (const key of stateCache.keys()) {
+      if (key.includes(tenantOrWorkspaceId)) {
+        stateCache.delete(key);
+      }
+    }
+  }
+
+  /**
+   * Resolve authoritative Facebook connection state for a given tenant context.
+   */
+  static async resolveFacebookConnectionState(params: {
+    tenantId?: string;
+    workspaceId?: string;
+    userId?: string;
+    forceRefresh?: boolean;
+  }): Promise<FacebookConnectionStateResult> {
+    const tenantId = params.tenantId || params.workspaceId || 'unconfigured-tenant';
+    const workspaceId = params.workspaceId || params.tenantId || 'unconfigured-workspace';
+    const userId = params.userId;
+
+    const cacheKey = `${tenantId}:${workspaceId}:${userId || 'anon'}`;
+    const now = Date.now();
+
+    if (!params.forceRefresh && stateCache.has(cacheKey)) {
+      const cached = stateCache.get(cacheKey)!;
+      if (now - cached.cachedAt < CACHE_TTL_MS) {
+        return cached.result;
+      }
+    }
+
+    const defaultDisconnectedResult: FacebookConnectionStateResult = {
+      state: 'DISCONNECTED',
+      provider: 'facebook',
+      tenantId,
+      workspaceId,
+      userId,
+      userConnectionExists: false,
+      tokenValid: false,
+      requiredAppId: AUTHORITATIVE_META_APP_ID,
+      isStaleAppToken: false,
+      pagePermissionsGranted: false,
+      grantedPermissions: [],
+      declinedPermissions: [],
+      availablePagesCount: 0,
+      availablePages: [],
+      pageAccessible: false,
+      requiresReauth: false,
+      statusMessage: 'Facebook is not connected.',
+      ctaAction: 'CONNECT_FACEBOOK',
+      ctaLabel: 'Connect Facebook',
+    };
+
+    try {
+      const supabase = getServiceSupabase();
+
+      // 1. Query active social_connections strictly for this workspace / user
+      // CRITICAL: Exclude DISCONNECTED, REVOKED, or DELETED records
+      let connQuery = supabase
+        .from('social_connections')
+        .select('*')
+        .eq('provider', 'facebook')
+        .not('connection_status', 'in', '("DISCONNECTED","REVOKED","REMOVED","disconnected")');
+
+      if (!workspaceId || workspaceId === 'default' || workspaceId === 'unconfigured-workspace' || !userId) {
+        return defaultDisconnectedResult;
+      }
+
+      connQuery = connQuery
+        .eq('workspace_id', workspaceId)
+        .eq('user_id', userId);
+
+      const { data: rawConns } = await connQuery.order('updated_at', { ascending: false });
+      const activeConnections = (rawConns || []).filter(
+        c => c.connection_status === 'CONNECTED' || c.connection_status === 'ACTIVE'
+      );
+
+      // Canonical Page resolution: prefer newest connection with token_status=TOKEN_VALID
+      // so a stale REAUTH_REQUIRED row never overrides a valid Page.
+      const sortedActiveConnections = [...activeConnections].sort((a, b) => {
+        const aValid = a.token_status === 'TOKEN_VALID' ? 1 : 0;
+        const bValid = b.token_status === 'TOKEN_VALID' ? 1 : 0;
+        if (aValid !== bValid) return bValid - aValid;
+        const aBiz = (a.account_type === 'BUSINESS' || a.metadata?.is_page === true || a.metadata?.provider_account_type === 'FACEBOOK_PAGE') ? 1 : 0;
+        const bBiz = (b.account_type === 'BUSINESS' || b.metadata?.is_page === true || b.metadata?.provider_account_type === 'FACEBOOK_PAGE') ? 1 : 0;
+        if (aBiz !== bBiz) return bBiz - aBiz;
+        return new Date(b.updated_at || 0).getTime() - new Date(a.updated_at || 0).getTime();
+      });
+
+      // Resolve the selected operational Page independently from the OAuth
+      // authorization identity. Page discovery must always use the dedicated
+      // Facebook user credential, never a Page token stored on social_connections.
+      let facebookUserId: string | undefined = undefined;
+      let facebookUserName: string | undefined = undefined;
+      const activeConnRecord = sortedActiveConnections.find(c =>
+        c.account_type === 'BUSINESS' ||
+        c.metadata?.is_page === true ||
+        c.metadata?.provider_account_type === 'FACEBOOK_PAGE'
+      ) || null;
+
+      let accessToken: string | null = null;
+      let storedDiscoveredPages: any[] = [];
+      if (userId) {
+        const credential = await MetaCredentialService.getValidTokenForWorkspace(userId, workspaceId, 'facebook');
+        if (credential?.accessToken && !credential.isExpired) {
+          accessToken = credential.accessToken;
+          facebookUserId = credential.metaUserId || undefined;
+          storedDiscoveredPages = Array.isArray(credential.extraMeta?.discovered_pages)
+            ? credential.extraMeta.discovered_pages
+            : [];
+        }
+      }
+
+      if (!accessToken) {
+        stateCache.set(cacheKey, { result: defaultDisconnectedResult, cachedAt: now });
+        return defaultDisconnectedResult;
+      }
+
+      if (!accessToken || !accessToken.startsWith('EAA')) {
+        const result: FacebookConnectionStateResult = {
+          ...defaultDisconnectedResult,
+          userConnectionExists: true,
+          state: 'REAUTH_REQUIRED',
+          requiresReauth: true,
+          reason: 'INVALID_ENCRYPTED_TOKEN',
+          statusMessage: 'Facebook needs to be reconnected.',
+          ctaAction: 'RECONNECT_EXPIRED',
+          ctaLabel: 'Reconnect Facebook',
+        };
+        stateCache.set(cacheKey, { result, cachedAt: now });
+        return result;
+      }
+
+      // 3. Inspect Token with Meta Graph API (/debug_token & /me/permissions)
+      let debugData: any = null;
+      let permissionsList: Array<{ permission: string; status: string }> = [];
+
+      try {
+        // App secret proof / debug_token check
+        const debugRes = await fetch(
+          `https://graph.facebook.com/${META_GRAPH_API_VERSION}/debug_token?input_token=${encodeURIComponent(accessToken)}&access_token=${encodeURIComponent(accessToken)}`
+        );
+        if (debugRes.ok) {
+          const dJson = await debugRes.json();
+          debugData = dJson.data;
+        }
+      } catch {}
+
+      // Check token expiration
+      if (debugData && debugData.is_valid === false) {
+        const result: FacebookConnectionStateResult = {
+          ...defaultDisconnectedResult,
+          userConnectionExists: true,
+          tokenValid: false,
+          state: 'TOKEN_EXPIRED',
+          requiresReauth: true,
+          reason: 'TOKEN_EXPIRED_BY_META',
+          statusMessage: 'Your Facebook connection has expired.',
+          ctaAction: 'RECONNECT_EXPIRED',
+          ctaLabel: 'Reconnect Facebook',
+        };
+        stateCache.set(cacheKey, { result, cachedAt: now });
+        return result;
+      }
+
+      // Check Meta App Issuer Authority (PHASE 1 / FB-02 / FB-03)
+      const tokenAppId = debugData?.app_id ? String(debugData.app_id) : undefined;
+      const isStaleAppToken = Boolean(tokenAppId && tokenAppId !== AUTHORITATIVE_META_APP_ID);
+
+      if (isStaleAppToken) {
+        const result: FacebookConnectionStateResult = {
+          ...defaultDisconnectedResult,
+          userConnectionExists: true,
+          tokenValid: true,
+          tokenAppId,
+          isStaleAppToken: true,
+          state: 'REAUTH_REQUIRED',
+          requiresReauth: true,
+          reason: `STALE_APP_TOKEN: Token was issued by legacy Meta App (${tokenAppId}) instead of authoritative App (${AUTHORITATIVE_META_APP_ID}).`,
+          statusMessage: 'Facebook needs to be reconnected with the current Meta App.',
+          ctaAction: 'RECONNECT_PAGE_ACCESS',
+          ctaLabel: 'Reconnect Facebook',
+        };
+        stateCache.set(cacheKey, { result, cachedAt: now });
+        return result;
+      }
+
+      // Check Permissions via /me/permissions
+      try {
+        const permRes = await fetch(
+          `https://graph.facebook.com/${META_GRAPH_API_VERSION}/me/permissions?access_token=${encodeURIComponent(accessToken)}`
+        );
+        if (permRes.ok) {
+          const pJson = await permRes.json();
+          permissionsList = pJson.data || [];
+        }
+      } catch {}
+
+      const grantedPermissions = permissionsList.filter(p => p.status === 'granted').map(p => p.permission);
+      const declinedPermissions = permissionsList.filter(p => p.status !== 'granted').map(p => p.permission);
+
+      const hasPagesShowList = grantedPermissions.includes('pages_show_list') || (debugData?.scopes && debugData.scopes.includes('pages_show_list'));
+
+      // 4. Query /me/accounts to discover manageable Pages
+      // Attempt live Graph API discovery directly with the user token. Meta allows App Roles
+      // (Admins, Developers, Testers) to access /me/accounts under Standard Access even when
+      // pages_show_list is pending App Review or omitted from /me/permissions.
+      const availablePages: DiscoveredPageSummary[] = [];
+
+      try {
+        let nextPageUrl: string | null = `https://graph.facebook.com/${META_GRAPH_API_VERSION}/me/accounts?fields=id,name,username,category,tasks,picture,followers_count,fan_count,about,website,phone,single_line_address&limit=100&access_token=${encodeURIComponent(accessToken)}`;
+
+        while (nextPageUrl) {
+          const pageRes: Response = await fetch(nextPageUrl);
+          if (!pageRes.ok) break;
+          const pData: any = await pageRes.json();
+          const graphPages = pData.data || [];
+
+          for (const p of graphPages) {
+            availablePages.push({
+              pageId: String(p.id),
+              name: p.name,
+              username: p.username || `@${p.name.toLowerCase().replace(/\s+/g, '_')}`,
+              category: p.category || 'Business',
+              followersCount: Number(p.followers_count ?? p.fan_count ?? 0),
+              avatarUrl: p.picture?.data?.url || null,
+              tasks: p.tasks || [],
+            });
+          }
+          nextPageUrl = pData.paging?.next || null;
+        }
+      } catch (pageErr: any) {
+        console.warn('[FacebookStateService] /me/accounts discovery note:', pageErr.message);
+      }
+
+      // If Meta already returned managed Pages during the OAuth callback, retain
+      // that discovery result as a short-lived chooser fallback. The actual Page
+      // connection still re-validates access by resolving a genuine Page token.
+      if (availablePages.length === 0 && storedDiscoveredPages.length > 0) {
+        for (const p of storedDiscoveredPages) {
+          if (!p?.id || !p?.name) continue;
+          availablePages.push({
+            pageId: String(p.id),
+            name: p.name,
+            username: p.username || `@${String(p.name).toLowerCase().replace(/\\s+/g, '_')}`,
+            category: p.category || 'Business',
+            followersCount: Number(p.followers ?? p.followers_count ?? 0),
+            avatarUrl: p.avatar || p.avatarUrl || null,
+            tasks: Array.isArray(p.tasks) ? p.tasks : [],
+          });
+        }
+      }
+
+      // Check User Profile Name if not yet loaded
+      if (!facebookUserName) {
+        try {
+          const meRes = await fetch(`https://graph.facebook.com/${META_GRAPH_API_VERSION}/me?fields=id,name&access_token=${encodeURIComponent(accessToken)}`);
+          if (meRes.ok) {
+            const meJson = await meRes.json();
+            facebookUserId = meJson.id;
+            facebookUserName = meJson.name;
+          }
+        } catch {}
+      }
+
+      // 5. Determine State & Bound Selected Page
+      // Check for active selected page in active connection metadata or social_destinations
+      const boundPageId = activeConnRecord?.metadata?.pageId || (activeConnRecord?.account_type === 'BUSINESS' || activeConnRecord?.account_type === 'PAGE' ? activeConnRecord?.provider_account_id : undefined);
+      
+      let selectedPage: DiscoveredPageSummary | undefined = undefined;
+      if (boundPageId && availablePages.length > 0) {
+        selectedPage = availablePages.find(p => p.pageId === boundPageId);
+      }
+
+      // If activeConnRecord is already an active Business/Page connection, resolve selectedPage from it
+      if (!selectedPage && boundPageId && (activeConnRecord?.account_type === 'BUSINESS' || activeConnRecord?.account_type === 'PAGE' || activeConnRecord?.metadata?.is_page === true || activeConnRecord?.metadata?.provider_account_type === 'FACEBOOK_PAGE')) {
+        selectedPage = {
+          pageId: boundPageId,
+          name: activeConnRecord.account_name || activeConnRecord.metadata?.pageName || 'Facebook Page',
+          username: activeConnRecord.username || activeConnRecord.metadata?.pageUsername || `@${(activeConnRecord.account_name || 'page').toLowerCase().replace(/\s+/g, '_')}`,
+          category: activeConnRecord.metadata?.category || 'Business',
+          followersCount: Number(activeConnRecord.followers_count || activeConnRecord.metadata?.followers_count || 0),
+          avatarUrl: activeConnRecord.profile_image_url || activeConnRecord.metadata?.avatarUrl || null,
+        };
+        if (!availablePages.some(p => p.pageId === boundPageId)) {
+          availablePages.unshift(selectedPage);
+        }
+      }
+
+      // Check state branches:
+      // STATE: PROFILE_CONNECTED_PAGE_ACCESS_UNAVAILABLE
+      if ((availablePages.length === 0 && !selectedPage)) {
+        const result: FacebookConnectionStateResult = {
+          state: 'PROFILE_CONNECTED_PAGE_ACCESS_UNAVAILABLE',
+          provider: 'facebook',
+          tenantId,
+          workspaceId,
+          userId,
+          userConnectionExists: true,
+          tokenValid: true,
+          tokenAppId: tokenAppId || AUTHORITATIVE_META_APP_ID,
+          requiredAppId: AUTHORITATIVE_META_APP_ID,
+          isStaleAppToken: false,
+          facebookUserId,
+          facebookUserName,
+          pagePermissionsGranted: false,
+          grantedPermissions,
+          declinedPermissions,
+          availablePagesCount: availablePages.length,
+          availablePages,
+          pageAccessible: false,
+          requiresReauth: false,
+          reason: 'NO_PAGES_RETURNED_BY_META',
+          statusMessage: 'Your Facebook account is connected, but Facebook Page access is not currently available.',
+          ctaAction: 'RECONNECT_PAGE_ACCESS',
+          ctaLabel: 'Reconnect Facebook with Page Access',
+        };
+        stateCache.set(cacheKey, { result, cachedAt: now });
+        return result;
+      }
+
+      // STATE: PAGE_CONNECTED
+      if (selectedPage) {
+        const result: FacebookConnectionStateResult = {
+          state: 'PAGE_CONNECTED',
+          provider: 'facebook',
+          tenantId,
+          workspaceId,
+          userId,
+          userConnectionExists: true,
+          tokenValid: true,
+          tokenAppId: tokenAppId || AUTHORITATIVE_META_APP_ID,
+          requiredAppId: AUTHORITATIVE_META_APP_ID,
+          isStaleAppToken: false,
+          facebookUserId,
+          facebookUserName,
+          pagePermissionsGranted: true,
+          grantedPermissions,
+          declinedPermissions,
+          availablePagesCount: availablePages.length,
+          availablePages,
+          selectedPageId: selectedPage.pageId,
+          selectedPageName: selectedPage.name,
+          selectedPageFollowers: selectedPage.followersCount,
+          selectedPageCategory: selectedPage.category,
+          selectedPageAbout: activeConnRecord?.metadata?.about,
+          selectedPageWebsite: activeConnRecord?.metadata?.website,
+          pageAccessible: true,
+          requiresReauth: false,
+          statusMessage: `Facebook Page connected — ${selectedPage.name}`,
+          ctaAction: 'MANAGE_PAGE',
+          ctaLabel: 'Manage Page / Change Page',
+        };
+
+        // Authoritatively persist live Meta Graph API follower count and metadata to social_connections
+        if (activeConnRecord?.id && selectedPage.followersCount !== undefined && activeConnRecord.followers_count !== selectedPage.followersCount) {
+          try {
+            await supabase
+              .from('social_connections')
+              .update({
+                followers_count: selectedPage.followersCount,
+                account_name: selectedPage.name,
+                username: selectedPage.username,
+                profile_image_url: selectedPage.avatarUrl,
+                metadata: {
+                  ...(activeConnRecord.metadata || {}),
+                  followers: selectedPage.followersCount,
+                  fan_count: selectedPage.followersCount,
+                  followers_count: selectedPage.followersCount,
+                  category: selectedPage.category,
+                },
+                updated_at: new Date().toISOString()
+              })
+              .eq('id', activeConnRecord.id);
+          } catch {}
+        }
+
+        stateCache.set(cacheKey, { result, cachedAt: now });
+        return result;
+      }
+
+      // STATE: PROFILE_CONNECTED_PAGE_NOT_SELECTED
+      const result: FacebookConnectionStateResult = {
+        state: 'PROFILE_CONNECTED_PAGE_NOT_SELECTED',
+        provider: 'facebook',
+        tenantId,
+        workspaceId,
+        userId,
+        userConnectionExists: true,
+        tokenValid: true,
+        tokenAppId: tokenAppId || AUTHORITATIVE_META_APP_ID,
+        requiredAppId: AUTHORITATIVE_META_APP_ID,
+        isStaleAppToken: false,
+        facebookUserId,
+        facebookUserName,
+        pagePermissionsGranted: true,
+        grantedPermissions,
+        declinedPermissions,
+        availablePagesCount: availablePages.length,
+        availablePages,
+        pageAccessible: false,
+        requiresReauth: false,
+        statusMessage: 'Facebook is connected. Select the Page you want Ralion to manage.',
+        ctaAction: 'SELECT_FACEBOOK_PAGE',
+        ctaLabel: 'Select Facebook Page',
+      };
+      stateCache.set(cacheKey, { result, cachedAt: now });
+      return result;
+    } catch (err: any) {
+      console.error('[FacebookStateService] Resolution error:', err);
+      const errResult: FacebookConnectionStateResult = {
+        ...defaultDisconnectedResult,
+        state: 'ERROR',
+        reason: err.message,
+        statusMessage: 'Unable to verify Facebook connection state.',
+      };
+      return errResult;
+    }
+  }
+}

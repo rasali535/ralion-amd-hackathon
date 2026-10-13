@@ -1,0 +1,51 @@
+{
+  "name": "ralion-os-amd-hackathon",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Ralion OS — AMD Developer Hackathon ACT III Edition",
+  "engines": {
+    "node": ">=20.0.0",
+    "npm": ">=10.0.0"
+  },
+  "workspaces": [
+    "apps/ralion",
+    "packages/*"
+  ],
+  "scripts": {
+    "install:all": "npm install",
+    "dev": "npm run ralion:dev",
+    "build": "npm run ralion:build",
+    "ralion:dev": "npm run dev --workspace=@ralion/web",
+    "ralion:build": "npm run build --workspace=@ralion/web",
+    "lint": "npm run lint --workspace=@ralion/web",
+    "typecheck": "tsc --noEmit",
+    "test": "node ./scripts/verify-mari-widget-contract.js && node ./scripts/verify-developer-platform-live.js && node ./scripts/verify-admin-mari-observability.js && node ./scripts/verify-growth-social-admin.js && node ./scripts/test-social.js && node ./scripts/verify-mari-marketing-learning-v1.js && node ./scripts/verify-facebook-page-route-ownership.js && node ./scripts/verify-competitive-intelligence-dashboard.js && node ./scripts/verify-mari-facebook-growth-grounding.js && node ./scripts/verify-mari-output-sanitization.js && node ./scripts/verify-mari-facebook-response-boundary.js && node ./scripts/verify-mari-growth-artifact-sanitization.js && node ./scripts/verify-mari-provider-timeout.js && node ./scripts/verify-mari-grounded-growth-fallback.js && node ./scripts/verify-mari-growth-copy-hygiene.js && node ./scripts/verify-durable-billing-credits.js && node ./scripts/verify-durable-crm-customers.js && node ./scripts/verify-production-operational-core.js && node ./scripts/verify-mari-intelligence-api-rag.js && node ./scripts/verify-creative-semantic-retry.js && node ./scripts/verify-creative-brief-brand-gate.js && node ./scripts/verify-mari-creative-command-handoff.js && node ./scripts/verify-canonical-page-resolution-and-deduplication.js && node scripts/verify-meta-pages-show-list-review-flow.js && node scripts/verify-mari-hands-free-wake.js && node scripts/verify-mari-wake-navigation-persistence.js && node ./scripts/security/test-creative-rejection-storage-cleanup.cjs && node ./scripts/security/verify-auth-expired-refresh-recovery.js && node ./scripts/security/verify-creative-generation-idempotency.js && node ./scripts/security/verify-billing-card-vault-primary.js && node ./scripts/security/verify-r2-hybrid-storage.js && node ./scripts/security/verify-session-r2-social-stability.js && node ./scripts/test-amd-inference.js && node ./scripts/test-amd-connectivity.js && node ./scripts/verify-hackathon-database-isolation.js && node ./scripts/verify-amd-monitoring-centre.js && node ./scripts/verify-database-migrations-and-campaigns.js && node ./scripts/verify-mari-growth-amd-routing.js",
+    "test:amd": "node ./scripts/test-amd-inference.js",
+    "test:amd-connectivity": "node ./scripts/test-amd-connectivity.js",
+    "test:amd-routing": "node ./scripts/verify-mari-growth-amd-routing.js",
+    "test:isolation": "node ./scripts/verify-hackathon-database-isolation.js",
+    "test:monitoring": "node ./scripts/verify-amd-monitoring-centre.js",
+    "test:migrations": "node ./scripts/verify-database-migrations-and-campaigns.js",
+    "auth:provision-demo": "node ./scripts/provision-demo-users.js",
+    "security:audit": "node ./scripts/security-audit.js",
+    "security:secrets": "node ./scripts/security/scan-secrets.js",
+    "security:facebook-isolation": "node ./scripts/security/verify-facebook-tenant-isolation.js",
+    "security:social-rls": "node ./scripts/security/verify-social-rls-hardening.js"
+  },
+  "overrides": {
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "lucide-react": "^0.395.0"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.111.0"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "0.3.14",
+    "@types/node": "^22.0.0",
+    "@types/pg": "^8.23.1",
+    "embedded-postgres": "^18.4.0-beta.17",
+    "pg": "^8.23.0",
+    "typescript": "^5.4.5"
+  }
+}

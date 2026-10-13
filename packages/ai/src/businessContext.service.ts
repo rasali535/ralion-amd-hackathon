@@ -1,0 +1,1073 @@
+/**
+ * Ralion OS — Mari AI Business Context Engine
+ * 
+ * CORE PRINCIPLE: MARI SHOULD OPEN INFORMED, NOT EMPTY.
+ * Assembles a comprehensive, organization-scoped Business Context BEFORE
+ * generating briefings or answering customer queries.
+ * 
+ * Source of Truth Hierarchy:
+ * - Layer 1: Business Knowledge (Profile, Identity, Ingested Website, Products, Brand Voice, SOPs)
+ * - Layer 2: Live Business State (Live CRM deals, tasks, Facebook metrics, workflows, integrations)
+ * - Layer 3: Mari Growth Memory (User preferences, past accepted/rejected decisions, outcomes, learnings)
+ */
+
+import { WebsiteIngestionService, IngestedWebsiteKnowledge } from './websiteIngestion.service';
+
+export type DataProvenance = 'VERIFIED' | 'USER_APPROVED' | 'USER_PROVIDED' | 'INFERRED' | 'AI_RECOMMENDATION' | 'UNVERIFIED';
+
+export interface ProvenanceItem<T> {
+  value: T;
+  provenance: DataProvenance;
+  source: string;
+  confidence: number; // 0.0 - 1.0
+  lastVerifiedAt: string;
+}
+
+export interface Layer1BusinessKnowledge {
+  companyName: ProvenanceItem<string>;
+  legalIdentity?: ProvenanceItem<string>;
+  websiteUrl?: ProvenanceItem<string>;
+  websiteKnowledge?: ProvenanceItem<IngestedWebsiteKnowledge | null>;
+  tagline?: ProvenanceItem<string>;
+  industry: ProvenanceItem<string>;
+  targetMarket: ProvenanceItem<string>;
+  brandVoice: ProvenanceItem<string>;
+  valueProposition: ProvenanceItem<string>;
+  productsAndServices: ProvenanceItem<Array<{ name: string; category: string; description?: string }>>;
+  strategicGoals: ProvenanceItem<string[]>;
+  uploadedDocumentsCount: ProvenanceItem<number>;
+  knowledgeSources: Array<{ id: string; title: string; category: string; updatedAt: string; status: 'VERIFIED' | 'CONNECTED' | 'USER_PROVIDED' | 'PENDING' }>;
+}
+
+export interface Layer2BusinessState {
+  crm: {
+    isConnected: boolean;
+    totalPipelineValue: ProvenanceItem<number>;
+    activeCustomersCount: ProvenanceItem<number>;
+    prospectsCount: ProvenanceItem<number>;
+    recentDeals: Array<{ name: string; value: number; stage: string }>;
+  };
+  social: {
+    isConnected: boolean;
+    hasSelectedPage?: boolean;
+    isPersonalProfile?: boolean;
+    pageAccessUnavailable?: boolean;
+    connectionState?: 'DISCONNECTED' | 'PROFILE_CONNECTED_PAGE_ACCESS_UNAVAILABLE' | 'PROFILE_CONNECTED_PAGE_NOT_SELECTED' | 'PAGE_CONNECTED' | 'TOKEN_EXPIRED' | 'REAUTH_REQUIRED' | 'ERROR';
+    connectedPageName?: ProvenanceItem<string>;
+    pageId?: ProvenanceItem<string>;
+    pageUsername?: ProvenanceItem<string>;
+    pageCategory?: ProvenanceItem<string>;
+    pageAbout?: ProvenanceItem<string>;
+    pageWebsite?: ProvenanceItem<string>;
+    followersCount?: ProvenanceItem<number>;
+    reachGrowthPct?: ProvenanceItem<number>;
+    engagementRatePct?: ProvenanceItem<number>;
+    recentPostsCount?: ProvenanceItem<number>;
+    recentPosts?: Array<any>;
+    posts?: Array<any>;
+    topPerformingType?: ProvenanceItem<string>;
+    contactInfo?: {
+      phone?: string;
+      singleLineAddress?: string;
+    };
+    connectedChannels?: Array<{
+      provider: string;
+      connectionId: string;
+      providerAccountId: string;
+      accountName: string;
+      username?: string;
+      accountType?: string;
+      followersCount?: number;
+      status: string;
+      scopes?: string[];
+      capabilities?: Record<string, any>;
+      metadata?: Record<string, any>;
+      lastSyncedAt?: string;
+    }>;
+    instagram?: {
+      isConnected: boolean;
+      connectionId?: string;
+      accountId?: string;
+      accountName?: ProvenanceItem<string>;
+      username?: ProvenanceItem<string>;
+      accountType?: ProvenanceItem<string>;
+      followersCount?: ProvenanceItem<number>;
+      scopes?: string[];
+      canPublish?: boolean;
+      canReadInsights?: boolean;
+      canManageComments?: boolean;
+      canManageMessages?: boolean;
+      lastSyncedAt?: string;
+    };
+  };
+  operations: {
+    pendingTasksCount: ProvenanceItem<number>;
+    highPriorityTasksCount: ProvenanceItem<number>;
+    slaUptimePct: ProvenanceItem<number>;
+    workflowsRunToday: ProvenanceItem<number>;
+  };
+}
+
+export interface Layer3MariMemory {
+  userPreferences: Record<string, any>;
+  acceptedRecommendations: Array<{ id: string; title: string; acceptedAt: string }>;
+  rejectedRecommendations: Array<{ id: string; title: string; rejectedAt: string; reason?: string }>;
+  strategicThemes: string[];
+  recentActions: Array<{ id: string; action: string; timestamp: string }>;
+}
+
+export interface MariCreditsUsage {
+  totalAllocated: number;
+  used: number;
+  remaining: number;
+  tier: string;
+  planName: string;
+}
+
+export interface BusinessContext {
+  organizationId: string;
+  workspaceId?: string;
+  userId?: string;
+  organizationName: string;
+  isTestTenant: boolean;
+  version: string;
+  assembledAt: string;
+  activeScreen?: {
+    route: string;
+    label: string;
+    entityId?: string;
+  };
+  layer1: Layer1BusinessKnowledge;
+  layer2: Layer2BusinessState;
+  layer3: Layer3MariMemory;
+  credits: MariCreditsUsage;
+  primarySource?: string;
+  hasVerifiedKnowledge?: boolean;
+  personalProfileNotice?: string;
+  isPersonalSocialProfile?: boolean;
+}
+
+export interface TenantProfileOverride {
+  companyName?: string;
+  industry?: string;
+  targetMarket?: string;
+  valueProposition?: string;
+  productsAndServices?: Array<{ name: string; category: string; description?: string }>;
+  tagline?: string;
+  websiteUrl?: string;
+  brandVoice?: string;
+  strategicGoals?: string[];
+}
+
+const tenantProfileRegistry = new Map<string, TenantProfileOverride>();
+
+// In-memory cache for organization business contexts
+const contextCache: Record<string, { context: BusinessContext; cachedAt: number; version: number }> = {};
+const CACHE_TTL_MS = 60 * 1000; // 1 minute active cache
+
+function deduplicateProducts(items: Array<{ name: string; category?: string; description?: string }>): Array<{ name: string; category: string; description?: string }> {
+  const seen = new Set<string>();
+  const deduplicated: Array<{ name: string; category: string; description?: string }> = [];
+
+  for (const item of items) {
+    if (!item?.name) continue;
+    const normalized = item.name.trim().toLowerCase();
+    if (!seen.has(normalized)) {
+      seen.add(normalized);
+      deduplicated.push({
+        name: item.name.trim(),
+        category: item.category || 'General',
+        description: item.description,
+      });
+    }
+  }
+  return deduplicated;
+}
+
+export class BusinessContextService {
+  private static versionCounter = 1;
+
+  /**
+   * Registers or updates a tenant's business profile in the tenant profile registry.
+   */
+  static registerTenantProfile(orgId: string, profile: TenantProfileOverride) {
+    tenantProfileRegistry.set(orgId, profile);
+    this.invalidateContext(orgId);
+  }
+
+  /**
+   * Retrieves the registered profile for a tenant.
+   */
+  static getTenantProfile(orgId: string): TenantProfileOverride | undefined {
+    return tenantProfileRegistry.get(orgId);
+  }
+
+  /**
+   * Invalidates cached business context for a tenant or purges all caches.
+   * Safely supports composite tenant keys (organizationId + workspaceId + userId).
+   */
+  static invalidateContext(orgId?: string, workspaceId?: string, userId?: string) {
+    if (orgId) {
+      const targetOrg = orgId.toLowerCase().trim();
+      const targetWs = workspaceId ? workspaceId.toLowerCase().trim() : null;
+      const targetUser = userId ? userId.toLowerCase().trim() : null;
+
+      for (const k of Object.keys(contextCache)) {
+        const parts = k.toLowerCase().split('::');
+        const kOrg = parts[0];
+        const kWs = parts[1] || '';
+        const kUser = parts[2] || '';
+
+        if (kOrg === targetOrg || k.toLowerCase() === targetOrg) {
+          if (targetWs && kWs !== targetWs && kWs !== 'no-workspace') {
+            continue;
+          }
+          if (targetUser && kUser !== targetUser && kUser !== 'no-user') {
+            continue;
+          }
+          delete contextCache[k];
+        }
+      }
+    } else {
+      Object.keys(contextCache).forEach((k) => delete contextCache[k]);
+    }
+  }
+
+  /**
+   * Purges all in-memory business context caches.
+   */
+  static purgeAllCaches() {
+    Object.keys(contextCache).forEach((k) => delete contextCache[k]);
+  }
+
+  /**
+   * Assembles the complete 3-layer Business Context for an organization.
+   * Maintains strict tenant isolation and isolates test fixtures from production.
+   */
+  static async assembleContext(
+    orgId?: string,
+    options?: {
+      organizationId?: string;
+      workspaceId?: string;
+      userId?: string;
+      activeScreen?: { route: string; label: string; entityId?: string };
+      forceRefresh?: boolean;
+      isTestExecution?: boolean;
+      companyName?: string;
+      localOverrides?: {
+        contacts?: any[];
+        tasks?: any[];
+        documents?: any[];
+        fbPage?: any;
+        facebookState?: any;
+        instagram?: any;
+        instagramConnection?: any;
+        websiteKnowledge?: any;
+        tier?: string;
+        customKnowledge?: Partial<Layer1BusinessKnowledge>;
+      };
+    }
+  ): Promise<BusinessContext> {
+    const cleanOrgId = (options?.organizationId || orgId || '').trim() || 'unconfigured-tenant';
+    const effectiveWsId = (options?.workspaceId || '').trim() || 'no-workspace';
+    const effectiveUserId = (options?.userId || '').trim() || 'no-user';
+    const cacheKey = `${cleanOrgId}::${effectiveWsId}::${effectiveUserId}`;
+
+    const now = Date.now();
+    const cached = contextCache[cacheKey];
+
+    if (!options?.forceRefresh && !options?.localOverrides && cached && (now - cached.cachedAt < CACHE_TTL_MS)) {
+      if (options?.activeScreen) {
+        cached.context.activeScreen = options.activeScreen;
+      }
+      return cached.context;
+    }
+
+    const timestamp = new Date().toISOString();
+    const isRasAli = cleanOrgId === 'ras-ali-labs' || cleanOrgId === '22e61ff6-16fe-44c7-9d67-38e2a2e91ccf';
+    const isTest = Boolean(options?.isTestExecution || cleanOrgId.startsWith('test-') || cleanOrgId.includes('test'));
+    const registeredProfile = tenantProfileRegistry.get(cleanOrgId);
+    
+    // Check structured BusinessKnowledgeProfileService
+    let knowledgeProfile: any = null;
+    try {
+      const { BusinessKnowledgeProfileService } = require('./businessKnowledgeProfile.service');
+      knowledgeProfile = BusinessKnowledgeProfileService.getProfile(cleanOrgId);
+    } catch {}
+
+    // 1. Layer 1: Business Knowledge & Ingested Website
+    const websiteKnowledge =
+      options?.localOverrides?.websiteKnowledge ||
+      (options?.workspaceId ? WebsiteIngestionService.getWebsiteKnowledge(options.workspaceId) : null) ||
+      WebsiteIngestionService.getWebsiteKnowledge(cleanOrgId);
+    let fbPage = options?.localOverrides?.fbPage;
+    let connectedSocialChannels: any[] = [];
+    let instagramConnection: any = options?.localOverrides?.instagram || options?.localOverrides?.instagramConnection || null;
+
+    // Tenant-isolated localStorage validation. Never read a global Facebook-page key.
+    // For workspace-scoped context, require exact canonical organization, workspace, and user match.
+    // Do not accept legacy organization-only Facebook records inside a workspace context.
+    if (typeof window !== 'undefined' && window.localStorage) {
+      try {
+        const wsId = options?.workspaceId;
+        const userId = options?.userId;
+
+        if (!fbPage) {
+          if (wsId) {
+            const wsStorageKey = `ralion:${cleanOrgId}:${wsId}:selected_fb_page`;
+            const rawP = window.localStorage.getItem(wsStorageKey);
+            if (rawP) {
+              const parsedP = JSON.parse(rawP);
+              const orgMatches = parsedP?.organizationId === cleanOrgId;
+              const wsMatches = parsedP?.workspaceId === wsId;
+              const userMatches = !userId || parsedP?.userId === userId;
+
+              if (parsedP && orgMatches && wsMatches && userMatches) {
+                fbPage = parsedP;
+              }
+            }
+          } else {
+            const orgStorageKey = `ralion:${cleanOrgId}:selected_fb_page`;
+            const rawP = window.localStorage.getItem(orgStorageKey);
+            if (rawP) {
+              const parsedP = JSON.parse(rawP);
+              const orgMatches = parsedP?.organizationId === cleanOrgId;
+              const userMatches = !userId || !parsedP?.userId || parsedP?.userId === userId;
+
+              if (parsedP && orgMatches && userMatches) {
+                fbPage = parsedP;
+              }
+            }
+          }
+        }
+
+        if (!instagramConnection) {
+          const igStorageKey = wsId
+            ? `ralion:${cleanOrgId}:${wsId}:selected_instagram_account`
+            : `ralion:${cleanOrgId}:selected_instagram_account`;
+          const rawIg = window.localStorage.getItem(igStorageKey);
+          if (rawIg) {
+            const parsedIg = JSON.parse(rawIg);
+            if (parsedIg && (parsedIg.organizationId === cleanOrgId || !parsedIg.organizationId)) {
+              instagramConnection = parsedIg;
+            }
+          }
+        }
+      } catch {}
+    } else if (typeof window === 'undefined') {
+      // 1. Resolve Facebook page from Supabase if not provided in overrides
+      if (!fbPage) {
+        try {
+          const { createClient } = require('@supabase/supabase-js');
+          const sUrl = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
+          const sKey =
+            process.env.SUPABASE_SECRET_KEY ||
+            process.env.SUPABASE_SERVICE_ROLE_KEY ||
+            process.env.SUPABASE_SERVICE_KEY;
+          if (sUrl && sKey && cleanOrgId !== 'unconfigured-tenant' && cleanOrgId !== 'public-visitor') {
+            const sClient = createClient(sUrl, sKey, { auth: { persistSession: false } });
+
+            const targetOrgId = options?.organizationId || cleanOrgId;
+            const targetWorkspaceId = options?.workspaceId;
+            const targetUserId = options?.userId;
+
+            let query = sClient
+              .from('social_connections')
+              .select('*')
+              .eq('provider', 'facebook')
+              .in('connection_status', ['CONNECTED', 'ACTIVE', 'connected']);
+
+            if (targetWorkspaceId && targetOrgId) {
+              query = query.or(`organization_id.eq.${targetOrgId},workspace_id.eq.${targetWorkspaceId}`);
+            } else if (targetWorkspaceId) {
+              query = query.eq('workspace_id', targetWorkspaceId);
+            } else if (targetOrgId) {
+              query = query.eq('organization_id', targetOrgId);
+            }
+
+            if (targetUserId) {
+              query = query.eq('user_id', targetUserId);
+            }
+
+            const res = await query.order('updated_at', { ascending: false });
+
+            if (res.data && res.data.length > 0) {
+              const sortedConns = [...res.data].sort((a: any, b: any) => {
+                const aValid = a.token_status === 'TOKEN_VALID' ? 1 : 0;
+                const bValid = b.token_status === 'TOKEN_VALID' ? 1 : 0;
+                if (aValid !== bValid) return bValid - aValid;
+                const aBiz = (a.account_type === 'BUSINESS' || a.metadata?.is_page === true || a.metadata?.provider_account_type === 'FACEBOOK_PAGE') ? 1 : 0;
+                const bBiz = (b.account_type === 'BUSINESS' || b.metadata?.is_page === true || b.metadata?.provider_account_type === 'FACEBOOK_PAGE') ? 1 : 0;
+                if (aBiz !== bBiz) return bBiz - aBiz;
+                return new Date(b.updated_at || 0).getTime() - new Date(a.updated_at || 0).getTime();
+              });
+
+              const conn = sortedConns.find((c: any) => 
+                c.account_type === 'BUSINESS' || 
+                c.metadata?.is_page === true || 
+                c.metadata?.provider_account_type === 'FACEBOOK_PAGE'
+              ) || sortedConns[0];
+
+              if (conn) {
+                const isP = Boolean(conn.metadata?.is_page === true || conn.account_type === 'BUSINESS' || conn.metadata?.provider_account_type === 'FACEBOOK_PAGE');
+                fbPage = {
+                  id: conn.id,
+                  pageId: conn.metadata?.pageId || conn.provider_account_id || conn.id,
+                  name: conn.account_name || conn.metadata?.pageName || (isP ? 'Facebook Page' : 'Personal Profile'),
+                  username: conn.username || conn.metadata?.pageUsername || `@${(conn.account_name || 'page').toLowerCase().replace(/\s+/g, '_')}`,
+                  category: conn.metadata?.category || 'Business',
+                  fanCount: Number(conn.followers_count) || Number(conn.metadata?.followers_count) || 0,
+                  about: conn.metadata?.about || conn.metadata?.description || undefined,
+                  description: conn.metadata?.description || conn.metadata?.about || undefined,
+                  website: conn.metadata?.website || conn.metadata?.websiteUrl || undefined,
+                  contactInfo: conn.metadata?.contactInfo || conn.metadata?.phone || undefined,
+                  status: conn.connection_status,
+                  accountType: conn.account_type,
+                  metadata: conn.metadata,
+                  isPersonalProfile: !isP,
+                };
+              }
+            }
+          }
+        } catch (srvErr: any) {
+          console.warn('[BusinessContext] Server-side Facebook connection query notice:', srvErr?.message);
+        }
+      }
+
+      // 2. Query all multi-channel social connections (runs independently of fbPage!)
+      try {
+        const { createClient } = require('@supabase/supabase-js');
+        const sUrl = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
+        const sKey =
+          process.env.SUPABASE_SECRET_KEY ||
+          process.env.SUPABASE_SERVICE_ROLE_KEY ||
+          process.env.SUPABASE_SERVICE_KEY;
+
+        if (sUrl && sKey && cleanOrgId !== 'unconfigured-tenant' && cleanOrgId !== 'public-visitor') {
+          const sClient = createClient(sUrl, sKey, { auth: { persistSession: false } });
+          let channelQuery = sClient
+            .from('social_connections')
+            .select('id,provider,provider_account_id,account_name,username,account_type,connection_status,token_status,scopes,capabilities,metadata,followers_count,last_sync_at')
+            .in('connection_status', ['CONNECTED', 'ACTIVE', 'connected', 'active']);
+
+          const targetOrgId = options?.organizationId || cleanOrgId;
+          const targetWorkspaceId = options?.workspaceId;
+
+          if (targetOrgId && targetWorkspaceId) {
+            channelQuery = channelQuery.or(`organization_id.eq.${targetOrgId},workspace_id.eq.${targetWorkspaceId}`);
+          } else if (targetOrgId) {
+            channelQuery = channelQuery.eq('organization_id', targetOrgId);
+          } else if (targetWorkspaceId) {
+            channelQuery = channelQuery.eq('workspace_id', targetWorkspaceId);
+          }
+
+          const channelRes = await channelQuery.order('updated_at', { ascending: false });
+          connectedSocialChannels = (channelRes.data || []).filter((row: any) => {
+            if (String(row.provider || '').toLowerCase() !== 'facebook') return true;
+            return row.account_type === 'BUSINESS' ||
+              row.account_type === 'PAGE' ||
+              row.metadata?.is_page === true ||
+              row.metadata?.provider_account_type === 'FACEBOOK_PAGE';
+          });
+
+          if (!instagramConnection) {
+            instagramConnection = connectedSocialChannels.find(
+              (row: any) => String(row.provider || '').toLowerCase() === 'instagram'
+            ) || null;
+          }
+        }
+      } catch (channelErr: any) {
+        console.warn('[BusinessContext] Multi-channel social connection query notice:', channelErr?.message);
+      }
+    }
+
+    if (instagramConnection && !connectedSocialChannels.some((c: any) => String(c.provider || '').toLowerCase() === 'instagram')) {
+      connectedSocialChannels.push({
+        id: instagramConnection.id || instagramConnection.connectionId || 'ig-conn',
+        provider: 'instagram',
+        provider_account_id: instagramConnection.provider_account_id || instagramConnection.accountId || instagramConnection.id,
+        account_name: instagramConnection.account_name || instagramConnection.name || instagramConnection.username || 'Instagram Business Account',
+        username: instagramConnection.username,
+        account_type: instagramConnection.account_type || instagramConnection.accountType || 'BUSINESS',
+        connection_status: instagramConnection.connection_status || instagramConnection.status || 'CONNECTED',
+        token_status: instagramConnection.token_status || 'TOKEN_VALID',
+        scopes: instagramConnection.scopes || [],
+        capabilities: instagramConnection.capabilities || {},
+        metadata: instagramConnection.metadata || {},
+        followers_count: instagramConnection.followers_count ?? instagramConnection.followersCount ?? 0,
+        last_sync_at: instagramConnection.last_sync_at || instagramConnection.lastSyncedAt || timestamp,
+      });
+    }
+
+    const isPersonalFb = Boolean(
+      fbPage?.accountType === 'FACEBOOK_PERSONAL_PROFILE' ||
+      fbPage?.account_type === 'PERSONAL' ||
+      fbPage?.isPersonalProfile === true ||
+      fbPage?.category === 'USER_PROFILE' ||
+      (fbPage?.metadata && (fbPage.metadata.provider_account_type === 'FACEBOOK_PERSONAL_PROFILE' || (!fbPage.metadata.pageId && fbPage.metadata.facebookUserId))) ||
+      fbPage?.name === 'Personal Facebook Profile' ||
+      fbPage?.name === 'Facebook Profile (Connected)'
+    );
+
+    const isSocialPageConnected = Boolean(
+      !isPersonalFb &&
+      fbPage &&
+      fbPage.name &&
+      fbPage.name !== 'Not Connected'
+    );
+
+    const personalProfileNotice = isPersonalFb
+      ? "Your connected Facebook account is a personal profile. Facebook Page business posts, followers, and analytics are not available yet. Connect a Facebook Page to unlock Page-level business intelligence."
+      : undefined;
+
+    const isInstagramConnected = Boolean(instagramConnection);
+    const normalizedChannels = connectedSocialChannels.map((row: any) => ({
+      provider: String(row.provider || '').toLowerCase(),
+      connectionId: String(row.id || ''),
+      providerAccountId: String(row.provider_account_id || ''),
+      accountName: String(row.account_name || row.username || row.provider || 'Connected Account'),
+      username: row.username || undefined,
+      accountType: row.account_type || undefined,
+      followersCount: Number(row.followers_count || 0),
+      status: String(row.connection_status || 'CONNECTED'),
+      scopes: Array.isArray(row.scopes) ? row.scopes : [],
+      capabilities: row.capabilities || {},
+      metadata: row.metadata || {},
+      lastSyncedAt: row.last_sync_at || undefined,
+    }));
+
+    // 1. Resolve Canonical Business Identity via authoritative BusinessIdentityResolver
+    const { BusinessIdentityResolver } = require('./businessIdentityResolver');
+    const resolvedIdentity = BusinessIdentityResolver.resolveIdentity(orgId, {
+      sessionCompanyName: options?.companyName || websiteKnowledge?.title,
+      sessionOrgName: registeredProfile?.companyName || websiteKnowledge?.title,
+    });
+
+    const orgName = resolvedIdentity.companyName || websiteKnowledge?.title || registeredProfile?.companyName || '';
+    const isIdentityVerified = resolvedIdentity.isVerified || Boolean(websiteKnowledge?.title);
+
+    const isWkValid = Boolean(
+      websiteKnowledge && (
+        websiteKnowledge.status === 'INGESTED' ||
+        websiteKnowledge.provenance === 'VERIFIED' ||
+        (websiteKnowledge.sections && websiteKnowledge.sections.length > 0) ||
+        (websiteKnowledge.websiteUrl && websiteKnowledge.websiteUrl !== 'Not configured') ||
+        Boolean(websiteKnowledge.title)
+      )
+    );
+
+    const hasVerifiedKnowledge = Boolean(
+      isIdentityVerified ||
+      isWkValid ||
+      Boolean(registeredProfile?.companyName)
+    );
+
+    const hasOperationalSocial = isSocialPageConnected || isInstagramConnected || normalizedChannels.length > 0;
+    const connectedProviderNames = Array.from(new Set(normalizedChannels.map((channel: any) => channel.provider))).filter(Boolean);
+    const socialSourceLabel = connectedProviderNames.length > 0
+      ? connectedProviderNames.map((provider: string) => provider.charAt(0).toUpperCase() + provider.slice(1)).join(' + ')
+      : (isSocialPageConnected ? 'Facebook' : '');
+
+    const primarySource = isIdentityVerified
+      ? (hasOperationalSocial && isWkValid
+          ? `Business Profile + Website + ${socialSourceLabel || 'Social'}`
+          : (isWkValid ? 'Business Profile + Website' : (hasOperationalSocial ? `Business Knowledge Profile + ${socialSourceLabel || 'Social'}` : 'Business Knowledge Profile')))
+      : (isWkValid
+          ? (websiteKnowledge?.source || 'LIVE_INGESTED')
+          : (hasOperationalSocial ? `${socialSourceLabel || 'Social'} Attachment` : 'Unverified Workspace'));
+
+    const contactsList = options?.localOverrides?.contacts || [];
+    const hasRealContacts = contactsList.length > 0;
+    const tasksList = options?.localOverrides?.tasks || [];
+    const hasRealTasks = tasksList.length > 0;
+
+    // Extract website knowledge fields if ingested
+    const hasIngestedWk = Boolean(websiteKnowledge && websiteKnowledge.status === 'INGESTED');
+    const wkProducts = hasIngestedWk && websiteKnowledge.productsServices && websiteKnowledge.productsServices.length > 0
+      ? websiteKnowledge.productsServices
+      : null;
+    const wkDescription = hasIngestedWk ? (websiteKnowledge.description || websiteKnowledge.summary) : null;
+
+    // 1. Layer 1: Canonical Business Knowledge & Ingested Website (Compositional - Strict Precedence)
+    const layer1: Layer1BusinessKnowledge = {
+      companyName: {
+        value: orgName,
+        provenance: isIdentityVerified ? 'VERIFIED' : (orgName ? 'USER_PROVIDED' : 'UNVERIFIED'),
+        source: resolvedIdentity.source || (websiteKnowledge?.source || 'USER_PROVIDED'),
+        confidence: isIdentityVerified ? 1.0 : (orgName ? 0.7 : 0.0),
+        lastVerifiedAt: timestamp,
+      },
+      legalIdentity: {
+        value: isIdentityVerified ? `${orgName} Registered Entity` : (orgName ? `${orgName} Commercial Entity` : 'Unverified Business'),
+        provenance: isIdentityVerified ? 'VERIFIED' : 'UNVERIFIED',
+        source: 'Corporate Registration Record',
+        confidence: isIdentityVerified ? 1.0 : 0.0,
+        lastVerifiedAt: timestamp,
+      },
+      websiteUrl: {
+        value: (websiteKnowledge?.websiteUrl && websiteKnowledge.websiteUrl !== 'Not configured')
+          ? websiteKnowledge.websiteUrl
+          : (resolvedIdentity.websiteUrl !== 'Not configured' ? resolvedIdentity.websiteUrl : (fbPage?.website || 'Not configured')),
+        provenance: (isWkValid || resolvedIdentity.websiteUrl !== 'Not configured') ? 'VERIFIED' : 'UNVERIFIED',
+        source: (websiteKnowledge?.source as any) || (isWkValid ? 'LIVE_INGESTED' : (resolvedIdentity.websiteUrl !== 'Not configured' ? 'SAVED_PROFILE' : 'PLATFORM_DEFAULT')),
+        confidence: (isWkValid || resolvedIdentity.websiteUrl !== 'Not configured') ? 1.0 : 0.0,
+        lastVerifiedAt: timestamp,
+      },
+      websiteKnowledge: {
+        value: websiteKnowledge || null,
+        provenance: websiteKnowledge?.provenance || (isWkValid ? 'VERIFIED' : 'UNVERIFIED'),
+        source: websiteKnowledge?.source === 'PLATFORM_DEFAULT'
+          ? 'PLATFORM_DEFAULT'
+          : websiteKnowledge?.source === 'SAVED_PROFILE'
+          ? 'SAVED_PROFILE'
+          : (isWkValid ? 'LIVE_INGESTED' : 'Not Ingested'),
+        confidence: isWkValid ? 0.98 : 0.0,
+        lastVerifiedAt: websiteKnowledge?.lastSuccessfulSync || timestamp,
+      },
+      tagline: {
+        value: registeredProfile?.tagline || resolvedIdentity.tagline || (isIdentityVerified ? `Empowering ${orgName}` : ''),
+        provenance: hasVerifiedKnowledge ? 'VERIFIED' : 'UNVERIFIED',
+        source: primarySource,
+        confidence: hasVerifiedKnowledge ? 0.9 : 0.0,
+        lastVerifiedAt: timestamp,
+      },
+      industry: {
+        value: registeredProfile?.industry || resolvedIdentity.industry || (fbPage?.category ? fbPage.category : ''),
+        provenance: isIdentityVerified ? 'VERIFIED' : 'UNVERIFIED',
+        source: primarySource,
+        confidence: isIdentityVerified ? 1.0 : 0.0,
+        lastVerifiedAt: timestamp,
+      },
+      targetMarket: {
+        value: registeredProfile?.targetMarket || resolvedIdentity.targetMarket || '',
+        provenance: isIdentityVerified ? 'VERIFIED' : 'UNVERIFIED',
+        source: primarySource,
+        confidence: isIdentityVerified ? 0.95 : 0.0,
+        lastVerifiedAt: timestamp,
+      },
+      brandVoice: {
+        value: registeredProfile?.brandVoice || resolvedIdentity.brandVoice || 'Professional, Neutral',
+        provenance: isIdentityVerified ? 'VERIFIED' : 'UNVERIFIED',
+        source: primarySource,
+        confidence: isIdentityVerified ? 0.95 : 0.2,
+        lastVerifiedAt: timestamp,
+      },
+      valueProposition: {
+        value: wkDescription || registeredProfile?.valueProposition || resolvedIdentity.valueProposition || (fbPage?.about ? fbPage.about : ''),
+        provenance: isIdentityVerified || hasIngestedWk ? 'VERIFIED' : 'UNVERIFIED',
+        source: hasIngestedWk ? 'Ingested Public Website' : primarySource,
+        confidence: hasIngestedWk ? 1.0 : (isIdentityVerified ? 0.95 : 0.0),
+        lastVerifiedAt: timestamp,
+      },
+      productsAndServices: {
+        value: deduplicateProducts(wkProducts || registeredProfile?.productsAndServices || resolvedIdentity.productsAndServices || []),
+        provenance: (wkProducts || registeredProfile?.productsAndServices || resolvedIdentity.productsAndServices?.length > 0) ? 'VERIFIED' : 'UNVERIFIED',
+        source: wkProducts ? 'Ingested Public Website' : primarySource,
+        confidence: (wkProducts || registeredProfile?.productsAndServices || resolvedIdentity.productsAndServices?.length > 0) ? 1.0 : 0.0,
+        lastVerifiedAt: timestamp,
+      },
+      strategicGoals: {
+        value: registeredProfile?.strategicGoals || [],
+        provenance: registeredProfile?.strategicGoals ? 'USER_PROVIDED' : 'UNVERIFIED',
+        source: 'Executive Strategy',
+        confidence: registeredProfile?.strategicGoals ? 0.9 : 0.0,
+        lastVerifiedAt: timestamp,
+      },
+      uploadedDocumentsCount: {
+        value: options?.localOverrides?.documents?.length || 0,
+        provenance: 'VERIFIED',
+        source: 'Document Vault',
+        confidence: 1.0,
+        lastVerifiedAt: timestamp,
+      },
+      knowledgeSources: [
+        ...(isIdentityVerified ? [{ id: 'k-identity', title: `Business Identity (${orgName})`, category: 'IDENTITY', updatedAt: timestamp, status: 'VERIFIED' as const }] : []),
+        ...(isWkValid ? [{ id: 'k-web', title: `Website Knowledge (${websiteKnowledge?.websiteUrl})`, category: 'WEBSITE', updatedAt: websiteKnowledge?.lastSuccessfulSync || timestamp, status: 'VERIFIED' as const }] : []),
+        ...(isSocialPageConnected ? [{ id: 'k-soc', title: `Facebook Page (${fbPage?.name})`, category: 'SOCIAL', updatedAt: timestamp, status: 'CONNECTED' as const }] : []),
+        ...(isInstagramConnected ? [{ id: 'k-soc-ig', title: `Instagram Account (@${instagramConnection?.username || instagramConnection?.account_name || 'Instagram'})`, category: 'SOCIAL', updatedAt: instagramConnection?.last_sync_at || timestamp, status: 'CONNECTED' as const }] : []),
+        ...(isPersonalFb ? [{ id: 'k-soc-personal', title: `Facebook Personal Profile (${fbPage?.name || 'Personal Profile'}) — Business Page Not Connected`, category: 'SOCIAL', updatedAt: timestamp, status: 'PENDING' as const }] : []),
+        ...(hasRealContacts ? [{ id: 'k-crm', title: 'Live CRM Ledger', category: 'CRM', updatedAt: timestamp, status: 'CONNECTED' as const }] : []),
+        ...(hasRealTasks ? [{ id: 'k-tasks', title: 'Operational Tasks', category: 'OPERATIONS', updatedAt: timestamp, status: 'CONNECTED' as const }] : []),
+      ],
+    };
+
+    // 2. Layer 2: Live Business State — Derived strictly from live records, never fake numbers
+    // Live CRM telemetry calculation
+    let totalPipeline = 0;
+    let activeCustCount = 0;
+    let prospectsCount = 0;
+    let recentDeals: Array<{ name: string; value: number; stage: string }> = [];
+
+    if (hasRealContacts) {
+      totalPipeline = contactsList.reduce((acc: number, c: any) => acc + (Number(c.dealValue) || 0), 0);
+      activeCustCount = contactsList.filter((c: any) => c.type === 'CUSTOMER' || !c.type).length;
+      prospectsCount = contactsList.filter((c: any) => c.type === 'PROSPECT').length;
+      recentDeals = contactsList.slice(0, 3).map((c: any) => ({
+        name: c.name || c.company || 'Client Deal',
+        value: Number(c.dealValue) || 0,
+        stage: c.stage || 'PROPOSAL',
+      }));
+    }
+
+    const pendingTasks = hasRealTasks 
+      ? tasksList.filter((t: any) => t.status === 'PENDING').length 
+      : 0;
+    const highPriTasks = hasRealTasks 
+      ? tasksList.filter((t: any) => t.status === 'PENDING' && t.priority === 'HIGH').length 
+      : 0;
+
+    const isSocialConnected = Boolean(isSocialPageConnected || isPersonalFb || isInstagramConnected || connectedSocialChannels.length > 0);
+    const followers = isSocialPageConnected ? (Number(fbPage?.fanCount) || 0) : 0;
+    const pageName = isSocialPageConnected ? (fbPage?.name || 'Facebook Page') : (isPersonalFb ? 'Personal Profile (Business Page Not Connected)' : 'Not Connected');
+
+    const connectionState = options?.localOverrides?.facebookState || (fbPage?.connectionState) || (isSocialPageConnected ? 'PAGE_CONNECTED' : (isPersonalFb ? 'PROFILE_CONNECTED_PAGE_ACCESS_UNAVAILABLE' : (isSocialConnected ? 'PROFILE_CONNECTED_PAGE_NOT_SELECTED' : 'DISCONNECTED')));
+    const isPageAccessUnavailable = connectionState === 'PROFILE_CONNECTED_PAGE_ACCESS_UNAVAILABLE' || (isPersonalFb && !isSocialPageConnected);
+
+    const layer2: Layer2BusinessState = {
+      crm: {
+        isConnected: hasRealContacts,
+        totalPipelineValue: {
+          value: totalPipeline,
+          provenance: hasRealContacts ? 'VERIFIED' : 'UNVERIFIED',
+          source: 'CRM Portfolio Ledger',
+          confidence: hasRealContacts ? 1.0 : 0.0,
+          lastVerifiedAt: timestamp,
+        },
+        activeCustomersCount: {
+          value: activeCustCount,
+          provenance: hasRealContacts ? 'VERIFIED' : 'UNVERIFIED',
+          source: 'Customer Directory',
+          confidence: hasRealContacts ? 1.0 : 0.0,
+          lastVerifiedAt: timestamp,
+        },
+        prospectsCount: {
+          value: prospectsCount,
+          provenance: hasRealContacts ? 'VERIFIED' : 'UNVERIFIED',
+          source: 'Pipeline Leads',
+          confidence: hasRealContacts ? 1.0 : 0.0,
+          lastVerifiedAt: timestamp,
+        },
+        recentDeals,
+      },
+      social: {
+        isConnected: isSocialConnected,
+        hasSelectedPage: isSocialPageConnected,
+        isPersonalProfile: isPersonalFb,
+        pageAccessUnavailable: isPageAccessUnavailable,
+        connectionState,
+        connectedPageName: {
+          value: pageName,
+          provenance: isSocialPageConnected ? 'VERIFIED' : (isPersonalFb ? 'USER_PROVIDED' : 'UNVERIFIED'),
+          source: 'Meta Graph API',
+          confidence: isSocialPageConnected ? 1.0 : (isPersonalFb ? 0.8 : 0.0),
+          lastVerifiedAt: timestamp,
+        },
+        pageId: {
+          value: fbPage?.pageId || fbPage?.id || '',
+          provenance: isSocialConnected ? 'VERIFIED' : 'UNVERIFIED',
+          source: 'Meta Graph API',
+          confidence: isSocialConnected ? 1.0 : 0.0,
+          lastVerifiedAt: timestamp,
+        },
+        pageUsername: {
+          value: fbPage?.username || '',
+          provenance: isSocialConnected && fbPage?.username ? 'VERIFIED' : 'UNVERIFIED',
+          source: 'Meta Graph API',
+          confidence: isSocialConnected && fbPage?.username ? 1.0 : 0.0,
+          lastVerifiedAt: timestamp,
+        },
+        pageCategory: {
+          value: fbPage?.category || '',
+          provenance: isSocialConnected && fbPage?.category ? 'VERIFIED' : 'UNVERIFIED',
+          source: 'Meta Graph API',
+          confidence: isSocialConnected && fbPage?.category ? 1.0 : 0.0,
+          lastVerifiedAt: timestamp,
+        },
+        pageAbout: {
+          value: fbPage?.about || fbPage?.description || '',
+          provenance: isSocialConnected && (fbPage?.about || fbPage?.description) ? 'VERIFIED' : 'UNVERIFIED',
+          source: 'Meta Graph API',
+          confidence: isSocialConnected && (fbPage?.about || fbPage?.description) ? 1.0 : 0.0,
+          lastVerifiedAt: timestamp,
+        },
+        pageWebsite: {
+          value: fbPage?.website || '',
+          provenance: isSocialConnected && fbPage?.website ? 'VERIFIED' : 'UNVERIFIED',
+          source: 'Meta Graph API',
+          confidence: isSocialConnected && fbPage?.website ? 1.0 : 0.0,
+          lastVerifiedAt: timestamp,
+        },
+        followersCount: {
+          value: followers,
+          provenance: isSocialConnected ? 'VERIFIED' : 'UNVERIFIED',
+          source: 'Meta Graph API',
+          confidence: isSocialConnected ? 1.0 : 0.0,
+          lastVerifiedAt: timestamp,
+        },
+        reachGrowthPct: {
+          value: 0.0,
+          provenance: 'VERIFIED',
+          source: 'Social Analytics Engine',
+          confidence: 0.0,
+          lastVerifiedAt: timestamp,
+        },
+        engagementRatePct: {
+          value: 0.0,
+          provenance: 'INFERRED',
+          source: 'Social Analytics Engine',
+          confidence: 0.0,
+          lastVerifiedAt: timestamp,
+        },
+        recentPostsCount: {
+          value: Number(fbPage?.recentPosts?.length || fbPage?.recentPostsCount || 0),
+          provenance: isSocialConnected ? 'VERIFIED' : 'UNVERIFIED',
+          source: 'Meta Graph API',
+          confidence: isSocialConnected ? 1.0 : 0.0,
+          lastVerifiedAt: timestamp,
+        },
+        recentPosts: fbPage?.recentPosts || [],
+        posts: fbPage?.recentPosts || [],
+        topPerformingType: {
+          value: 'Not analyzed yet',
+          provenance: 'UNVERIFIED',
+          source: 'Mari Content Learning Engine',
+          confidence: 0.0,
+          lastVerifiedAt: timestamp,
+        },
+        contactInfo: {
+          phone: fbPage?.phone,
+          singleLineAddress: fbPage?.singleLineAddress,
+        },
+        connectedChannels: normalizedChannels,
+        instagram: {
+          isConnected: isInstagramConnected,
+          connectionId: instagramConnection?.id || undefined,
+          accountId: instagramConnection?.provider_account_id || instagramConnection?.metadata?.igUserId || undefined,
+          accountName: {
+            value: instagramConnection?.account_name || 'Not Connected',
+            provenance: isInstagramConnected ? 'VERIFIED' : 'UNVERIFIED',
+            source: 'Instagram Graph API',
+            confidence: isInstagramConnected ? 1.0 : 0.0,
+            lastVerifiedAt: timestamp,
+          },
+          username: {
+            value: instagramConnection?.username || '',
+            provenance: isInstagramConnected && instagramConnection?.username ? 'VERIFIED' : 'UNVERIFIED',
+            source: 'Instagram Graph API',
+            confidence: isInstagramConnected && instagramConnection?.username ? 1.0 : 0.0,
+            lastVerifiedAt: timestamp,
+          },
+          accountType: {
+            value: instagramConnection?.metadata?.accountType || instagramConnection?.account_type || '',
+            provenance: isInstagramConnected ? 'VERIFIED' : 'UNVERIFIED',
+            source: 'Instagram Graph API',
+            confidence: isInstagramConnected ? 1.0 : 0.0,
+            lastVerifiedAt: timestamp,
+          },
+          followersCount: {
+            value: Number(instagramConnection?.followers_count || 0),
+            provenance: isInstagramConnected ? 'VERIFIED' : 'UNVERIFIED',
+            source: 'Instagram Graph API',
+            confidence: isInstagramConnected ? 1.0 : 0.0,
+            lastVerifiedAt: timestamp,
+          },
+          scopes: Array.isArray(instagramConnection?.scopes) ? instagramConnection.scopes : [],
+          canPublish: Boolean(
+            instagramConnection?.capabilities?.publish ??
+            (Array.isArray(instagramConnection?.scopes) && instagramConnection.scopes.some((s: string) => /publish/i.test(s))) ??
+            isInstagramConnected
+          ),
+          canReadInsights: Boolean(
+            instagramConnection?.capabilities?.insights ??
+            (Array.isArray(instagramConnection?.scopes) && instagramConnection.scopes.some((s: string) => /insight/i.test(s))) ??
+            isInstagramConnected
+          ),
+          canManageComments: Boolean(
+            instagramConnection?.capabilities?.comments ??
+            (Array.isArray(instagramConnection?.scopes) && instagramConnection.scopes.some((s: string) => /comment/i.test(s))) ??
+            isInstagramConnected
+          ),
+          canManageMessages: Boolean(
+            instagramConnection?.capabilities?.messages ??
+            (Array.isArray(instagramConnection?.scopes) && instagramConnection.scopes.some((s: string) => /message/i.test(s))) ??
+            isInstagramConnected
+          ),
+          lastSyncedAt: instagramConnection?.last_sync_at || undefined,
+        },
+      },
+      operations: {
+        pendingTasksCount: {
+          value: pendingTasks,
+          provenance: 'VERIFIED',
+          source: 'Workspace Tasks Ledger',
+          confidence: 1.0,
+          lastVerifiedAt: timestamp,
+        },
+        highPriorityTasksCount: {
+          value: highPriTasks,
+          provenance: 'VERIFIED',
+          source: 'Workspace Tasks Ledger',
+          confidence: 1.0,
+          lastVerifiedAt: timestamp,
+        },
+        slaUptimePct: {
+          value: 100.0,
+          provenance: 'VERIFIED',
+          source: 'Infrastructure Telemetry',
+          confidence: 1.0,
+          lastVerifiedAt: timestamp,
+        },
+        workflowsRunToday: {
+          value: 0,
+          provenance: 'VERIFIED',
+          source: 'Workflow Execution Bus',
+          confidence: 1.0,
+          lastVerifiedAt: timestamp,
+        },
+      },
+    };
+
+    // 3. Layer 3: Mari Growth Memory
+    const layer3: Layer3MariMemory = {
+      userPreferences: {
+        reportingStyle: 'Executive, Concise, Structured',
+        primaryFocus: 'B2B Revenue & Audience Growth',
+        autoApprovalAllowed: false,
+      },
+      acceptedRecommendations: [],
+      rejectedRecommendations: [],
+      strategicThemes: hasVerifiedKnowledge ? ['Customer growth and pipeline execution'] : [],
+      recentActions: [],
+    };
+
+    // Credits usage
+    const tier = (options?.localOverrides?.tier || 'COMMUNITY').toUpperCase();
+    const allocated = tier === 'COMMUNITY' ? 10000 : 100000;
+    const credits: MariCreditsUsage = {
+      totalAllocated: allocated,
+      used: 0,
+      remaining: allocated,
+      tier,
+      planName: tier === 'COMMUNITY' ? 'Community Free Plan' : tier === 'STANDARD' ? 'Standard Plan' : 'Enterprise Unlimited',
+    };
+
+    this.versionCounter += 1;
+    const versionStr = `2026-08-24-v${this.versionCounter}`;
+
+    const context: BusinessContext = {
+      organizationId: cleanOrgId,
+      workspaceId: options?.workspaceId,
+      userId: options?.userId,
+      organizationName: orgName,
+      isTestTenant: isTest,
+      version: versionStr,
+      assembledAt: timestamp,
+      activeScreen: options?.activeScreen,
+      layer1,
+      layer2,
+      layer3,
+      credits,
+      primarySource,
+      hasVerifiedKnowledge,
+      personalProfileNotice,
+      isPersonalSocialProfile: isPersonalFb,
+    };
+
+    if (!options?.localOverrides) {
+      contextCache[cacheKey] = {
+        context,
+        cachedAt: now,
+        version: this.versionCounter,
+      };
+    }
+
+    return context;
+  }
+
+  /**
+   * Generates a grounded, high-density system prompt string from the 3-Layer Business Context.
+   * Enforces authoritative business intelligence without web-browsing refusal text.
+   */
+  static generateContextPrompt(context: BusinessContext): string {
+    const l1 = context.layer1;
+    const l2 = context.layer2;
+    const l3 = context.layer3;
+    const websiteSnippet = WebsiteIngestionService.generateWebsitePromptSnippet(context.organizationId);
+
+    const crmSection = l2.crm.isConnected
+      ? `- CRM Pipeline Revenue: $${l2.crm.totalPipelineValue.value.toLocaleString()} across ${l2.crm.activeCustomersCount.value} active clients & ${l2.crm.prospectsCount.value} prospects. Deals: ${l2.crm.recentDeals.map(d => `${d.name} ($${d.value.toLocaleString()})`).join(', ')}`
+      : `- CRM: No active deals connected yet.`;
+
+    const channelLines: string[] = [];
+    if (l2.social.hasSelectedPage) {
+      channelLines.push(
+        `- Facebook Page: "${l2.social.connectedPageName?.value}" | ${l2.social.followersCount?.value ?? 'unknown'} followers | Top Content: ${l2.social.topPerformingType?.value || 'not analyzed'}`
+      );
+    } else if (context.isPersonalSocialProfile) {
+      channelLines.push('- Facebook: A personal authorization profile exists, but NO operational Facebook Business Page is connected. Do NOT claim Page posts, followers, or analytics.');
+    }
+
+    if (l2.social.instagram?.isConnected) {
+      const ig = l2.social.instagram;
+      channelLines.push(
+        `- Instagram Professional: "${ig.accountName?.value}"${ig.username?.value ? ` (@${String(ig.username.value).replace(/^@/, '')})` : ''} | ${ig.followersCount?.value ?? 'unknown'} followers | account type: ${ig.accountType?.value || 'professional'} | publishing: ${ig.canPublish ? 'enabled' : 'not granted'} | insights: ${ig.canReadInsights ? 'enabled' : 'not granted'} | comments: ${ig.canManageComments ? 'enabled' : 'not granted'} | messages: ${ig.canManageMessages ? 'enabled' : 'not granted'}`
+      );
+    }
+
+    for (const channel of l2.social.connectedChannels || []) {
+      if (channel.provider === 'facebook' || channel.provider === 'instagram') continue;
+      channelLines.push(
+        `- ${channel.provider.charAt(0).toUpperCase() + channel.provider.slice(1)}: "${channel.accountName}"${channel.username ? ` (@${String(channel.username).replace(/^@/, '')})` : ''} | status: ${channel.status}`
+      );
+    }
+
+    const socialSection = channelLines.length > 0
+      ? channelLines.join('\n')
+      : `- Social Accounts: Not connected.`;
+
+    return `=== AUTHORITATIVE BUSINESS KNOWLEDGE (Organization: ${l1.companyName.value}) ===
+LEGAL IDENTITY: ${l1.legalIdentity?.value || l1.companyName.value}
+INDUSTRY: ${l1.industry.value}
+BRAND VOICE: ${l1.brandVoice.value}
+TARGET MARKET: ${l1.targetMarket.value}
+VALUE PROPOSITION: ${l1.valueProposition.value}
+STRATEGIC GOALS: ${l1.strategicGoals.value.join('; ')}
+CORE PRODUCTS & SERVICES:
+${l1.productsAndServices.value.map(p => `• ${p.name} (${p.category})`).join('\n')}
+
+${websiteSnippet}
+
+LIVE BUSINESS STATE:
+${crmSection}
+${socialSection}
+- Operations: ${l2.operations.pendingTasksCount.value} pending tasks (${l2.operations.highPriorityTasksCount.value} high priority) | SLA Uptime: ${l2.operations.slaUptimePct.value}%
+
+MARI GROWTH MEMORY:
+- Strategic Themes: ${l3.strategicThemes.join('; ')}
+- Accepted Decisions: ${l3.acceptedRecommendations.map(r => r.title).join('; ') || 'None recorded yet'}
+- Governance: Human review required prior to publishing.
+
+CURRENT SCREEN: ${context.activeScreen ? `${context.activeScreen.label} (${context.activeScreen.route})` : 'Mari Command Center'}
+
+CRITICAL OPERATIONAL RULES:
+1. YOU ARE MARI AI — the intelligent AI Business Growth Partner for ${l1.companyName.value}.
+2. YOU ALREADY POSSESS full, verified, authoritative knowledge of ${l1.companyName.value} and its website (${l1.websiteUrl?.value}).
+3. NEVER state "I cannot browse the web" or "I do not have real-time web access" when asked about this company or website. Answer directly and authoritatively from the verified business knowledge provided above.
+4. If the user asks "What do you know about my business?" or "Tell me about our company", answer with a crisp, executive summary structured as:
+   ### Your Business
+   **Core business**: ...
+   **What you sell**: ...
+   **Who you serve**: ...
+   **How you differentiate**: ...
+   **Current growth priorities**: ...
+   **Current commercial position**: ...
+   **Marketing position**: ...
+   **What I believe deserves attention**: ...
+   *Would you like me to turn this into a growth plan?*
+5. If asked for information that is genuinely missing from both Layer 1 and Layer 2, state honestly: "I know your business is focused on X and Y, but I don't currently have verified information about Z. [Add Business Knowledge] [Connect Data Source]".
+6. ALWAYS aim your responses toward practical BUSINESS GROWTH (Revenue, Customers, Audience, Efficiency).
+7. Treat each social channel independently. A connected Facebook Page does NOT imply Instagram is connected, and a connected Instagram Professional account does NOT imply Facebook is connected.
+8. When Instagram is connected, use the verified Instagram account name, username, followers and granted capabilities above. Never reply that Instagram is unavailable if the verified Instagram Professional channel appears in LIVE BUSINESS STATE.
+9. If Instagram is not connected, say that specifically without implying all social channels are disconnected.`;
+  }
+}

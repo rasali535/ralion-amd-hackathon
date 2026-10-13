@@ -1,0 +1,64 @@
+# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
+
+# IDE and editors
+.idea/
+.vscode/
+
+# Dependencies
+node_modules/
+/.pnp
+.pnp.js
+.yarn/install-state.gz
+.yarn/*
+
+# Testing & Coverage
+/coverage
+playwright-report/
+
+# Next.js
+.next/
+out/
+apps/ralion/out/
+apps/ralion/.next/
+next-env.d.ts
+*.tsbuildinfo
+
+# Production builds
+/build
+/build/
+build/
+dist/
+
+# Logs and debug files
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# System files
+.DS_Store
+*.pem
+
+# Python
+__pycache__/
+*pyc*
+venv/
+.venv/
+
+# Environment files - strictly ignore all real secrets
+.env
+.env.*
+!.env.example
+!.env.production.example
+apps/ralion/.env
+apps/ralion/.env.local
+apps/ralion/.env.development.local
+apps/ralion/.env.test.local
+apps/ralion/.env.production.local
+
+# Large binaries and archives
+*.exe
+*.zip
+*.tar.gz
+scratch/
+.isolated-pgdata/
