@@ -574,7 +574,7 @@ export async function resolveRalionAuthContext(
         .from('workspace_members')
         .select('id, workspace_id, user_id, role, workspaces ( id, name, slug, owner_id, organization_id, created_at )')
         .eq('user_id', authUser.id)
-        .order('joined_at', { ascending: true })
+        .order('created_at', { ascending: true })
         .limit(1)
         .maybeSingle();
 
