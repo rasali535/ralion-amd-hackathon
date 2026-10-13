@@ -80,7 +80,7 @@ const nextConfig = {
     return [
       {
         source: '/',
-        destination: '/ralion/dashboard',
+        destination: '/ralion/',
         permanent: false,
         basePath: false,
       },
