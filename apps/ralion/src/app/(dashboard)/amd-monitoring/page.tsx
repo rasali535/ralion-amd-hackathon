@@ -101,24 +101,50 @@ interface TestRunResult {
   fixtureNotice?: string;
   finishReason: string;
   timestamp: string;
+  routingDecision?: {
+    selectedModel: string;
+    classification: string;
+    complexity: 'LOW' | 'MEDIUM' | 'HIGH';
+    strategy: 'SPEED' | 'BALANCED' | 'QUALITY';
+    routingReason: string;
+    candidateModels: string[];
+    capabilityScore: number;
+    fallbackChain: string[];
+    isManualOverride: boolean;
+    timestamp: string;
+  };
 }
 
 const PRESET_PROMPTS = [
   {
-    label: 'Luxury Delta Safari Itinerary',
-    prompt: 'Generate an exclusive 7-day fly-in luxury safari itinerary for high-net-worth travellers visiting private concessions in the Okavango Delta, focusing on bespoke conservation experiences.',
+    label: 'Scenario A: Mokoro Caption (Speed)',
+    prompt: 'Write a short Facebook caption promoting an Okavango mokoro safari.',
+    category: 'Social Media Caption',
+    expectedStrategy: 'SPEED',
   },
   {
-    label: 'Adventure Mobile Camping Brief',
-    prompt: 'Draft an engaging marketing campaign angle targeting budget-conscious adventure travellers and overlanders for guided mokoro canoe trails across Moremi and Chobe.',
+    label: 'Scenario B: 90-Day Strategy (Reasoning)',
+    prompt: 'Create a 90-day luxury safari marketing strategy for international travellers.',
+    category: 'Marketing Strategy',
+    expectedStrategy: 'QUALITY',
   },
   {
-    label: 'Mari AI Eco-Tourism Intelligence',
+    label: 'Scenario C: Audience Comparison (Comparative)',
+    prompt: 'Compare our luxury safari audience against budget-conscious adventure travellers and recommend different acquisition strategies.',
+    category: 'Comparative Reasoning',
+    expectedStrategy: 'QUALITY',
+  },
+  {
+    label: 'Scenario D: Multichannel Planning (Complex)',
+    prompt: 'Analyze our two campaign concepts and propose a coordinated multichannel marketing plan with measurable objectives.',
+    category: 'Complex Planning',
+    expectedStrategy: 'QUALITY',
+  },
+  {
+    label: 'Eco-Tourism Intelligence',
     prompt: 'Analyze seasonal demand patterns for Botswana wildlife tourism and recommend pricing tiers that support local community conservation programs.',
-  },
-  {
-    label: 'Creative Studio Storyboard',
-    prompt: 'Create a conceptual visual storyboard highlighting sunset mokoro dugout canoes gliding through papyrus waterways, with aerial views of elephant herds.',
+    category: 'Business Analysis',
+    expectedStrategy: 'BALANCED',
   },
 ];
 
@@ -131,8 +157,8 @@ export default function AmdMonitoringCentrePage() {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Test Runner State
-  const [selectedModel, setSelectedModel] = useState<string>('');
+  // Test Runner State - Default to 'auto' for Adaptive Model Routing
+  const [selectedModel, setSelectedModel] = useState<string>('auto');
   const [selectedModule, setSelectedModule] = useState<InitiatingModule>('monitoring_test');
   const [testPrompt, setTestPrompt] = useState<string>(PRESET_PROMPTS[0].prompt);
   const [runningTest, setRunningTest] = useState(false);
@@ -153,13 +179,13 @@ export default function AmdMonitoringCentrePage() {
       } else {
         setData(body);
         setError(null);
-        // Only select a model present in AMD's live catalog. Never retain
-        // a retired model ID or silently inject hard-coded alternatives.
+        // Default to 'auto' for intelligent adaptive model routing.
+        // Allow manual model selection if explicitly requested by operator.
         const available: string[] = Array.isArray(body.connection?.models) ? body.connection.models : [];
         setSelectedModel(previous =>
+          previous === 'auto' ? 'auto' :
           available.includes(previous) ? previous :
-          available.includes(body.connection?.selectedModel) ? body.connection.selectedModel :
-          available[0] || ''
+          'auto'
         );
       }
     } catch (err: any) {
@@ -176,8 +202,8 @@ export default function AmdMonitoringCentrePage() {
 
   const handleRunAmdTest = async () => {
     if (!testPrompt.trim()) return;
-    if (!selectedModel || !(data?.connection?.models || []).includes(selectedModel)) {
-      setTestError('No valid AMD model is selected. Refresh the live model catalog before testing.');
+    if (selectedModel && selectedModel !== 'auto' && !(data?.connection?.models || []).includes(selectedModel)) {
+      setTestError('Selected AMD model is not in the active catalog. Select Adaptive Routing or refresh catalog.');
       return;
     }
     setRunningTest(true);
@@ -189,7 +215,7 @@ export default function AmdMonitoringCentrePage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           prompt: testPrompt.trim(),
-          model: selectedModel,
+          model: selectedModel && selectedModel !== 'auto' ? selectedModel : undefined,
           module: selectedModule,
           max_tokens: 512,
           temperature: 0.7,
@@ -466,7 +492,7 @@ export default function AmdMonitoringCentrePage() {
                   </select>
                 </div>
 
-                {/* Model Selector (Requirement 2) */}
+                {/* Model Selector — Adaptive Routing by Default with Manual Override */}
                 <div className="flex items-center gap-1.5 bg-zinc-800/80 px-2.5 py-1 rounded-lg border border-zinc-700/60">
                   <span className="text-[11px] text-zinc-400">Model:</span>
                   <select
@@ -474,9 +500,12 @@ export default function AmdMonitoringCentrePage() {
                     onChange={(e) => setSelectedModel(e.target.value)}
                     className="bg-transparent text-xs text-white font-medium focus:outline-none cursor-pointer"
                   >
+                    <option value="auto" className="bg-zinc-900 text-rose-300 font-semibold">
+                      ⚡ Adaptive Routing (Auto-Select)
+                    </option>
                     {(data?.connection.models || []).map((m) => (
                       <option key={m} value={m} className="bg-zinc-900 text-white">
-                        {m}
+                        {m} (Override)
                       </option>
                     ))}
                   </select>
@@ -593,6 +622,103 @@ export default function AmdMonitoringCentrePage() {
                     </span>
                   </div>
                 </div>
+
+                {/* Adaptive Model Routing Decision (Requirement 7) */}
+                {testResult.routingDecision && (
+                  <div className="rounded-xl border border-rose-500/30 bg-rose-950/20 p-4 space-y-3">
+                    <div className="flex items-center justify-between flex-wrap gap-2 border-b border-rose-500/20 pb-2">
+                      <div className="flex items-center gap-2">
+                        <span className="flex h-2 w-2 rounded-full bg-rose-400 animate-pulse" />
+                        <span className="text-xs font-bold text-white uppercase tracking-wider">
+                          Adaptive Routing Decision
+                        </span>
+                        {testResult.routingDecision.isManualOverride ? (
+                          <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-amber-500/20 text-amber-300 border border-amber-500/40">
+                            MANUAL OVERRIDE
+                          </span>
+                        ) : (
+                          <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
+                            AUTOMATIC INTELLIGENT SELECTION
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="flex items-center gap-2 text-xs font-mono">
+                        <span className="text-zinc-400">Strategy:</span>
+                        <span className="px-2 py-0.5 rounded bg-zinc-900 border border-zinc-700 text-rose-300 font-bold">
+                          {testResult.routingDecision.strategy}
+                        </span>
+                        <span className="text-zinc-400">Score:</span>
+                        <span className="text-white font-bold">{testResult.routingDecision.capabilityScore} / 10</span>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
+                      <div className="bg-zinc-900/80 rounded-lg p-2.5 border border-zinc-800">
+                        <span className="text-[10px] uppercase font-semibold text-zinc-500 block">Enquiry Classification</span>
+                        <span className="font-semibold text-rose-200 mt-0.5 block">
+                          {testResult.routingDecision.classification.replace(/_/g, ' ')}
+                        </span>
+                      </div>
+
+                      <div className="bg-zinc-900/80 rounded-lg p-2.5 border border-zinc-800">
+                        <span className="text-[10px] uppercase font-semibold text-zinc-500 block">Task Complexity</span>
+                        <span className={`font-semibold mt-0.5 inline-block px-1.5 py-0.5 rounded text-[11px] ${
+                          testResult.routingDecision.complexity === 'HIGH'
+                            ? 'bg-rose-500/20 text-rose-300 border border-rose-500/40'
+                            : testResult.routingDecision.complexity === 'MEDIUM'
+                            ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
+                            : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
+                        }`}>
+                          {testResult.routingDecision.complexity} COMPLEXITY
+                        </span>
+                      </div>
+
+                      <div className="bg-zinc-900/80 rounded-lg p-2.5 border border-zinc-800">
+                        <span className="text-[10px] uppercase font-semibold text-zinc-500 block">Selected AMD Model</span>
+                        <span className="font-mono font-bold text-white mt-0.5 block truncate">
+                          {testResult.routingDecision.selectedModel}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Routing Reason */}
+                    <div className="bg-zinc-900/90 rounded-lg p-3 border border-zinc-800 text-xs">
+                      <span className="text-[10px] uppercase font-semibold text-zinc-400 block mb-1">
+                        Selection Rationale:
+                      </span>
+                      <p className="text-zinc-200 leading-relaxed font-sans">
+                        {testResult.routingDecision.routingReason}
+                      </p>
+                    </div>
+
+                    {/* Candidate Pool & Fallback Chain */}
+                    <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-zinc-400 pt-1">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="text-zinc-500">Live Candidates:</span>
+                        {testResult.routingDecision.candidateModels.map((m) => (
+                          <span
+                            key={m}
+                            className={`px-1.5 py-0.5 rounded font-mono text-[10px] border ${
+                              m === testResult.routingDecision?.selectedModel
+                                ? 'bg-rose-500/20 text-rose-300 border-rose-500/40 font-bold'
+                                : 'bg-zinc-900 text-zinc-400 border-zinc-800'
+                            }`}
+                          >
+                            {m}
+                          </span>
+                        ))}
+                      </div>
+
+                      {testResult.routingDecision.fallbackChain.length > 0 && (
+                        <div className="flex items-center gap-1 text-zinc-500 font-mono text-[10px]">
+                          <span>Fallback:</span>
+                          <span className="text-zinc-400">{testResult.routingDecision.fallbackChain.join(' → ')}</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
 
                 {/* Response Text */}
                 <div className="rounded-lg bg-zinc-900/90 border border-zinc-800/90 p-4 font-mono text-xs text-zinc-200 leading-relaxed whitespace-pre-wrap max-h-64 overflow-y-auto">

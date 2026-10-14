@@ -41,3 +41,4 @@ export {
 export * from './mariUniversalCore';
 export * from './amdInference.service';
 export * from './amdTokenFactory.service';
+export * from './adaptiveModelRouter.service';
