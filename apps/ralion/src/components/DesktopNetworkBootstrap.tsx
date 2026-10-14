@@ -521,9 +521,9 @@ function installDesktopFetchBridge() {
 }
 
 export function DesktopNetworkBootstrap({ children }: { children: React.ReactNode }) {
-  installDesktopFetchBridge();
-
   useEffect(() => {
+    installDesktopFetchBridge();
+
     const desktop = getDesktopBridge();
     if (!desktop?.isDesktop) return;
 

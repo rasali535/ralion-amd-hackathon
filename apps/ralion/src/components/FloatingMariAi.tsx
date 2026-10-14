@@ -83,10 +83,11 @@ export const FloatingMariAi: React.FC = () => {
 
         setMessages(prev => [...prev, { sender: 'MARI', text: responseText, id: `mari-${Date.now()}` }]);
       } else {
+        const errData = await res.json().catch(() => null);
         fallbackUsed = true;
         fallbackReason = `HTTP_${httpStatus}`;
-        responseText = "Mari couldn't complete that request right now. Please retry.";
-        responseSource = 'HTTP_ERROR';
+        responseText = errData?.error || "Mari couldn't complete that request right now. Please retry.";
+        responseSource = res.status === 429 ? 'RATE_LIMITED' : 'HTTP_ERROR';
         setMessages(prev => [
           ...prev,
           {

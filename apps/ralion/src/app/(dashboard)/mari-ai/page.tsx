@@ -556,6 +556,19 @@ export default function MariAiPage() {
             modelSucceeded = data.modelSucceeded;
             fallbackReason = data.fallbackReason;
           }
+        } else {
+          const errData = await res.json().catch(() => null);
+          if (res.status === 429) {
+            answerText = errData?.error || 'Daily AMD demo allowance reached. You can still explore the guided safari walkthrough or test models in the AMD AI Monitoring Centre.';
+            modelUsed = 'AMD Demo Guardrail (Rate Limit)';
+            responseSource = 'RATE_LIMITED';
+            fallbackUsed = false;
+          } else if (errData?.error) {
+            answerText = `Notice: ${errData.error}`;
+            modelUsed = 'Mari Service Notice';
+            responseSource = 'SERVER_NOTICE';
+            fallbackUsed = false;
+          }
         }
       } catch (apiErr: any) {
         console.warn('[Mari UI] Server API notice:', apiErr.message);
@@ -567,7 +580,8 @@ export default function MariAiPage() {
         responseSource = 'SERVER_ERROR';
         semanticDecisionSource = 'FALLBACK';
         fallbackReason = httpStatus ? `HTTP_${httpStatus}` : 'NETWORK_OR_SERVER_UNREACHABLE';
-        throw new Error('Mari server response unavailable');
+        answerText = 'Mari is temporarily unable to connect to the reasoning server. Please refresh or check your internet connection.';
+        modelUsed = 'Offline Fallback';
         suggestedActions = [];
       }
 
