@@ -40,22 +40,56 @@ export default function DashboardPage() {
   const [customer, setCustomer] = useState({ name: '', email: '', company: '', phone: '' });
   const [task, setTask] = useState({ title: '', project: 'General Operations', priority: 'MEDIUM', dueDate: '' });
 
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
   const loadOverview = async (showBlockingLoader = true) => {
     if (showBlockingLoader && !overview) setLoading(true);
     try {
-    const res = await authFetch('/api/reports/overview');
-    const body = await res.json().catch(() => ({}));
-    if (!res.ok) {
-      setError(body.error || 'Failed to load command centre.');
-    } else {
-      setOverview(body);
-      setError(null);
-      if (workspace?.id) {
-        writeDashboardOverviewCache(workspace.id, body);
+      const res = await authFetch('/api/reports/overview');
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setError(body.error || 'Failed to load command centre.');
+        if (!overview) {
+          setOverview({
+            generatedAt: new Date().toISOString(),
+            workspace: { id: workspace?.id || 'c0000000-0000-0000-0000-000000000001', name: workspace?.name || 'Safari Workspace' },
+            organization: { id: 'b0000000-0000-0000-0000-000000000001', name: 'Hackathon Demo' },
+            kpis: { customers: 0, openPipelineValue: 0, wonRevenue: 0, tasks: 0, completedTasks: 0 },
+            salesByStage: [],
+            monthlyCustomerGrowth: [],
+            recentTasks: [],
+            upcomingEvents: [],
+            recentDocuments: [],
+            billing: { credits: { remaining_plan_credits: 1000000, remaining_bonus_credits: 50000, reserved_credits: 0 } },
+          });
+        }
+      } else {
+        setOverview(body);
+        setError(null);
+        if (workspace?.id) {
+          writeDashboardOverviewCache(workspace.id, body);
+        }
       }
-    }
     } catch (err: any) {
       setError(err?.message || 'Dashboard overview is temporarily unavailable. Guided Demo and AMD Monitoring remain accessible.');
+      if (!overview) {
+        setOverview({
+          generatedAt: new Date().toISOString(),
+          workspace: { id: workspace?.id || 'c0000000-0000-0000-0000-000000000001', name: workspace?.name || 'Safari Workspace' },
+          organization: { id: 'b0000000-0000-0000-0000-000000000001', name: 'Hackathon Demo' },
+          kpis: { customers: 0, openPipelineValue: 0, wonRevenue: 0, tasks: 0, completedTasks: 0 },
+          salesByStage: [],
+          monthlyCustomerGrowth: [],
+          recentTasks: [],
+          upcomingEvents: [],
+          recentDocuments: [],
+          billing: { credits: { remaining_plan_credits: 1000000, remaining_bonus_credits: 50000, reserved_credits: 0 } },
+        });
+      }
     } finally { setLoading(false); }
   };
 
@@ -136,12 +170,12 @@ export default function DashboardPage() {
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           <Card><CardHeader><CardTitle className="justify-between"><span className="flex gap-2 items-center"><CheckSquare className="w-4 h-4 text-blue-400" /> Tasks</span><button onClick={() => router.push('/tasks')} className="text-xs text-blue-400 flex items-center">Open <ArrowRight className="w-3 h-3 ml-1" /></button></CardTitle></CardHeader><CardContent className="space-y-2">{(overview.recentTasks || []).slice(0,5).map(t => <div key={t.id} className="p-3 rounded-lg bg-zinc-900 border border-zinc-800"><div className="flex justify-between gap-2"><span className="text-xs font-semibold text-white">{t.title}</span><Badge variant={t.status === 'COMPLETED' ? 'success' : 'default'}>{t.status}</Badge></div><p className="text-[10px] text-zinc-500 mt-1">{t.project || 'General'} · {t.due_date || 'No due date'}</p></div>)}{!overview.recentTasks.length && <p className="text-xs text-zinc-500 py-6 text-center">No tasks yet.</p>}</CardContent></Card>
-          <Card><CardHeader><CardTitle className="justify-between"><span className="flex gap-2 items-center"><Calendar className="w-4 h-4 text-purple-400" /> Upcoming</span><button onClick={() => router.push('/calendar')} className="text-xs text-blue-400 flex items-center">Calendar <ArrowRight className="w-3 h-3 ml-1" /></button></CardTitle></CardHeader><CardContent className="space-y-2">{(overview.upcomingEvents || []).slice(0,5).map(e => <div key={e.id} className="p-3 rounded-lg bg-zinc-900 border border-zinc-800"><span className="text-xs font-semibold text-white">{e.title}</span><p className="text-[10px] text-zinc-500 mt-1">{e.start_at && !Number.isNaN(new Date(e.start_at).getTime()) ? new Date(e.start_at).toLocaleString() : 'Date unavailable'} · {e.category}</p></div>)}{!(overview.upcomingEvents || []).length && <p className="text-xs text-zinc-500 py-6 text-center">No upcoming events.</p>}</CardContent></Card>
+          <Card><CardHeader><CardTitle className="justify-between"><span className="flex gap-2 items-center"><Calendar className="w-4 h-4 text-purple-400" /> Upcoming</span><button onClick={() => router.push('/calendar')} className="text-xs text-blue-400 flex items-center">Calendar <ArrowRight className="w-3 h-3 ml-1" /></button></CardTitle></CardHeader><CardContent className="space-y-2">{(overview.upcomingEvents || []).slice(0,5).map(e => <div key={e.id} className="p-3 rounded-lg bg-zinc-900 border border-zinc-800"><span className="text-xs font-semibold text-white">{e.title}</span><p className="text-[10px] text-zinc-500 mt-1">{mounted && e.start_at && !Number.isNaN(new Date(e.start_at).getTime()) ? new Date(e.start_at).toLocaleString() : 'Recent'} · {e.category}</p></div>)}{!(overview.upcomingEvents || []).length && <p className="text-xs text-zinc-500 py-6 text-center">No upcoming events.</p>}</CardContent></Card>
           <Card><CardHeader><CardTitle className="justify-between"><span className="flex gap-2 items-center"><FileText className="w-4 h-4 text-emerald-400" /> Documents</span><button onClick={() => router.push('/documents')} className="text-xs text-blue-400 flex items-center">Files <ArrowRight className="w-3 h-3 ml-1" /></button></CardTitle></CardHeader><CardContent className="space-y-2">{(overview.recentDocuments || []).slice(0,5).map(d => <div key={d.id} className="p-3 rounded-lg bg-zinc-900 border border-zinc-800"><div className="flex justify-between gap-2"><span className="text-xs font-semibold text-white truncate">{d.name}</span><Badge variant={d.rag_status === 'READY' ? 'purple' : 'default'}>{d.rag_status}</Badge></div></div>)}{!overview.recentDocuments.length && <p className="text-xs text-zinc-500 py-6 text-center">No documents yet.</p>}</CardContent></Card>
         </div>
 
         <Card className="border-blue-500/20"><CardContent className="p-5"><div className="grid grid-cols-2 md:grid-cols-5 gap-4"><button onClick={() => router.push('/crm')} className="p-4 rounded-xl bg-zinc-900 border border-zinc-800 hover:border-blue-500/40 text-left"><TrendingUp className="w-5 h-5 text-blue-400 mb-2" /><span className="text-xs font-bold text-white block">CRM Pipeline</span><span className="text-[10px] text-zinc-500">{kpis.openDeals || 0} open deals</span></button><button onClick={() => router.push('/documents')} className="p-4 rounded-xl bg-zinc-900 border border-zinc-800 hover:border-blue-500/40 text-left"><FileText className="w-5 h-5 text-emerald-400 mb-2" /><span className="text-xs font-bold text-white block">Knowledge</span><span className="text-[10px] text-zinc-500">{kpis.ragReadyDocuments || 0} searchable docs</span></button><button onClick={() => router.push('/workflows')} className="p-4 rounded-xl bg-zinc-900 border border-zinc-800 hover:border-blue-500/40 text-left"><Zap className="w-5 h-5 text-purple-400 mb-2" /><span className="text-xs font-bold text-white block">Workflows</span><span className="text-[10px] text-zinc-500">{kpis.activeWorkflows || 0} active</span></button><button onClick={() => router.push('/reports')} className="p-4 rounded-xl bg-zinc-900 border border-zinc-800 hover:border-blue-500/40 text-left"><Sparkles className="w-5 h-5 text-amber-400 mb-2" /><span className="text-xs font-bold text-white block">Reports</span><span className="text-[10px] text-zinc-500">Live executive BI</span></button><button onClick={() => router.push('/amd-monitoring')} className="p-4 rounded-xl bg-zinc-900 border border-zinc-800 hover:border-rose-500/40 text-left"><Cpu className="w-5 h-5 text-rose-500 mb-2" /><span className="text-xs font-bold text-white block">AMD AI Centre</span><span className="text-[10px] text-zinc-500">Live ROCm telemetry</span></button></div></CardContent></Card>
-        <p className="text-[10px] text-zinc-600 text-right">Snapshot generated {overview.generatedAt && !Number.isNaN(new Date(overview.generatedAt).getTime()) ? new Date(overview.generatedAt).toLocaleString() : 'Unavailable'}</p>
+        <p className="text-[10px] text-zinc-600 text-right">Snapshot generated {mounted && overview.generatedAt && !Number.isNaN(new Date(overview.generatedAt).getTime()) ? new Date(overview.generatedAt).toLocaleString() : 'Recently'}</p>
       </>}
 
       <Modal isOpen={customerOpen} onClose={() => setCustomerOpen(false)} title="Add Customer"><div className="flex flex-col gap-4"><input value={customer.name} onChange={e => setCustomer(v => ({ ...v, name: e.target.value }))} placeholder="Customer name" className="px-3 py-2 rounded-lg bg-zinc-800 border border-zinc-700 text-xs text-white" /><input type="email" value={customer.email} onChange={e => setCustomer(v => ({ ...v, email: e.target.value }))} placeholder="Email" className="px-3 py-2 rounded-lg bg-zinc-800 border border-zinc-700 text-xs text-white" /><input value={customer.company} onChange={e => setCustomer(v => ({ ...v, company: e.target.value }))} placeholder="Company" className="px-3 py-2 rounded-lg bg-zinc-800 border border-zinc-700 text-xs text-white" /><input value={customer.phone} onChange={e => setCustomer(v => ({ ...v, phone: e.target.value }))} placeholder="Phone" className="px-3 py-2 rounded-lg bg-zinc-800 border border-zinc-700 text-xs text-white" /><div className="flex justify-end gap-2"><Button variant="outline" size="sm" onClick={() => setCustomerOpen(false)}>Cancel</Button><Button variant="primary" size="sm" disabled={saving} onClick={() => void addCustomer()}>Save Customer</Button></div></div></Modal>

@@ -19,17 +19,14 @@ function getCanonicalLoginUrl(currentHref?: string): string {
 
     if (isLocalhost) {
       const port = window.location.port;
-      const base = port === '3000' ? '/login' : '/ralion/login';
+      const base = port === '3000' ? '/judge-access' : '/ralion/judge-access';
       const redirectParam = currentHref ? `?redirect=${encodeURIComponent(currentHref)}` : '';
       return `${base}${redirectParam}`;
     }
   }
 
-  let targetHref = currentHref;
-  if (!targetHref || targetHref.includes('onrender.com') || targetHref.endsWith('/login')) {
-    targetHref = 'https://rasalilabs.com/ralion/dashboard';
-  }
-  return `https://rasalilabs.com/ralion/login?redirect=${encodeURIComponent(targetHref)}`;
+  const redirectParam = currentHref ? `?redirect=${encodeURIComponent(currentHref)}` : '';
+  return `/ralion/judge-access${redirectParam}`;
 }
 
 function isLocalWorkspaceBypass(): boolean {
@@ -116,10 +113,10 @@ export const ProductAccessGuard: React.FC<ProductAccessGuardProps> = ({ children
             size="sm"
             className="w-full justify-center border-zinc-800 bg-zinc-950 hover:bg-zinc-900"
             onClick={() => {
-              window.location.href = '/ralion/register';
+              window.location.href = '/ralion/explore';
             }}
           >
-            <Building2 className="w-4 h-4 mr-2" /> Create New Organization
+            <Building2 className="w-4 h-4 mr-2" /> Explore Safari Walkthrough
           </Button>
         </div>
       </Card>

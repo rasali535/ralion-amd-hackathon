@@ -30,7 +30,7 @@ export const Header: React.FC<HeaderProps> = ({
   isAdmin = false,
   activeBranch = "Main HQ",
   unreadNotifications = 0,
-  exitUrl = "https://rasalilabs.com",
+  exitUrl = "/ralion/dashboard",
   onExit,
   onOpenSearch,
   onOpenMariAI,

@@ -68,7 +68,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   orgName = 'Organization Workspace',
   userName,
   isPlatformAdmin = false,
-  platformUrl = 'https://portal.rasalilabs.com',
+  platformUrl = '/dashboard',
   isCollapsed = false,
   onToggleCollapse,
   onNavigate = (href) => { window.location.href = href; },
@@ -199,7 +199,18 @@ export const Sidebar: React.FC<SidebarProps> = ({
       <div className="p-3.5 border-b border-zinc-800/80 flex items-center justify-between">
         <div className="flex items-center gap-2.5 min-w-0">
           <div className="w-8 h-8 rounded-lg overflow-hidden flex items-center justify-center bg-black/80 border border-zinc-800 shrink-0 shadow-sm">
-            <img src="/logo.png" alt="Ralion OS" className="w-full h-full object-contain" />
+            <img
+              src="/ralion/assets/images/logo.png"
+              alt="Ralion OS"
+              className="w-full h-full object-contain"
+              onError={(e) => {
+                const target = e.currentTarget;
+                if (!target.dataset.tried) {
+                  target.dataset.tried = '1';
+                  target.src = '/ralion/ralion-logo.png';
+                }
+              }}
+            />
           </div>
           {!isCollapsed && (
             <div className="flex flex-col min-w-0">

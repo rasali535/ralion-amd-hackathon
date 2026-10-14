@@ -5028,10 +5028,10 @@ function GrowthPageContent() {
 
                         {post.status === 'published' && post.engagement && (
                           <div className="flex items-center gap-5 mt-4 text-[11px] text-zinc-400 border-t border-zinc-800/80 pt-3">
-                            <span>❤️ <strong className="text-white">{post.engagement.likes}</strong> likes</span>
-                            <span>🔁 <strong className="text-white">{post.engagement.shares}</strong> shares</span>
-                            <span>💬 <strong className="text-white">{post.engagement.comments}</strong> comments</span>
-                            <span>👁️ <strong className="text-emerald-400">{post.engagement.reach.toLocaleString()}</strong> reach</span>
+                            <span>❤️ <strong className="text-white">{post.engagement.likes ?? 0}</strong> likes</span>
+                            <span>🔁 <strong className="text-white">{post.engagement.shares ?? 0}</strong> shares</span>
+                            <span>💬 <strong className="text-white">{post.engagement.comments ?? 0}</strong> comments</span>
+                            <span>👁️ <strong className="text-emerald-400">{(post.engagement.reach != null ? Number(post.engagement.reach).toLocaleString() : '0')}</strong> reach</span>
                           </div>
                         )}
                       </div>
