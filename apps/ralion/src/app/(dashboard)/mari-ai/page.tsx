@@ -753,7 +753,7 @@ export default function MariAiPage() {
               <div className="flex flex-col text-left md:text-right">
                 <span className="text-[10px] uppercase font-bold tracking-wider text-zinc-400">Mari Credits</span>
                 <span className="text-xs font-bold text-white font-mono">
-                  {businessContext?.credits.remaining.toLocaleString() || '8,420'} / {businessContext?.credits.totalAllocated.toLocaleString() || '10,000'}
+                  {(businessContext?.credits?.remaining != null ? Number(businessContext.credits.remaining).toLocaleString() : '8,420')} / {(businessContext?.credits?.totalAllocated != null ? Number(businessContext.credits.totalAllocated).toLocaleString() : '10,000')}
                 </span>
               </div>
               <div className="w-16 h-2 rounded-full bg-zinc-800 overflow-hidden">
@@ -1120,9 +1120,9 @@ export default function MariAiPage() {
                       <div className="flex items-center justify-between gap-2 mt-2 pt-1 text-[10px] text-zinc-500 font-mono">
                         <span>{m.timestamp}</span>
                         <div className="flex items-center gap-2">
-                          {m.tokens?.totalTokens && (
+                          {m.tokens?.totalTokens != null && (
                             <span className="text-zinc-400 bg-zinc-900/80 px-2 py-0.5 rounded border border-zinc-800/80 font-mono text-[10px]">
-                              {m.tokens.totalTokens.toLocaleString()} tokens
+                              {Number(m.tokens.totalTokens).toLocaleString()} tokens
                             </span>
                           )}
                           <span className="text-purple-400/80">{m.modelUsed || 'Mari Growth Intelligence'}</span>
@@ -1591,19 +1591,19 @@ export default function MariAiPage() {
               <ul className="space-y-2 text-xs text-zinc-300">
                 <li className="flex items-center justify-between">
                   <span className="text-zinc-400">CRM Pipeline Value</span>
-                  <span className="font-semibold text-emerald-400 font-mono">${businessContext?.layer2.crm.totalPipelineValue.value.toLocaleString()}</span>
+                  <span className="font-semibold text-emerald-400 font-mono">${businessContext?.layer2?.crm?.totalPipelineValue?.value != null ? Number(businessContext.layer2.crm.totalPipelineValue.value).toLocaleString() : '0'}</span>
                 </li>
                 <li className="flex items-center justify-between">
                   <span className="text-zinc-400">Active Clients</span>
-                  <span className="font-semibold text-white">{businessContext?.layer2.crm.activeCustomersCount.value} Clients</span>
+                  <span className="font-semibold text-white">{businessContext?.layer2?.crm?.activeCustomersCount?.value ?? 0} Clients</span>
                 </li>
                 <li className="flex items-center justify-between">
                   <span className="text-zinc-400">Facebook Followers</span>
-                  <span className="font-semibold text-pink-400 font-mono">{businessContext?.layer2.social.followersCount?.value ?? 0} fans</span>
+                  <span className="font-semibold text-pink-400 font-mono">{businessContext?.layer2?.social?.followersCount?.value ?? 0} fans</span>
                 </li>
                 <li className="flex items-center justify-between">
                   <span className="text-zinc-400">Operational SLA</span>
-                  <span className="font-semibold text-emerald-400 font-mono">{businessContext?.layer2.operations.slaUptimePct.value ?? 100}%</span>
+                  <span className="font-semibold text-emerald-400 font-mono">{businessContext?.layer2?.operations?.slaUptimePct?.value ?? 100}%</span>
                 </li>
               </ul>
             </Card>

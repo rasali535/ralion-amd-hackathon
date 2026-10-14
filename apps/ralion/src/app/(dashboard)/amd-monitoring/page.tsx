@@ -388,7 +388,7 @@ export default function AmdMonitoringCentrePage() {
           </div>
           <div className="mt-3">
             <div className="text-xl font-black text-white">
-              {data ? data.usage.total_tokens.toLocaleString() : '0'}{' '}
+              {data?.usage?.total_tokens != null ? Number(data.usage.total_tokens).toLocaleString() : '0'}{' '}
               <span className="text-xs font-normal text-zinc-500">tokens</span>
             </div>
             <div className="text-[11px] text-zinc-400 mt-1 flex items-center justify-between">
@@ -779,9 +779,9 @@ export default function AmdMonitoringCentrePage() {
 
                         {/* Tokens */}
                         <td className="py-3 px-4 text-zinc-300 whitespace-nowrap">
-                          {req.usage.total_tokens || 0}{' '}
+                          {req.usage?.total_tokens ?? 0}{' '}
                           <span className="text-[9px] text-zinc-500">
-                            ({req.usage.prompt_tokens}/{req.usage.completion_tokens})
+                            ({req.usage?.prompt_tokens ?? 0}/{req.usage?.completion_tokens ?? 0})
                           </span>
                         </td>
 
