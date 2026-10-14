@@ -132,7 +132,7 @@ export default function AmdMonitoringCentrePage() {
   const [error, setError] = useState<string | null>(null);
 
   // Test Runner State
-  const [selectedModel, setSelectedModel] = useState<string>('DeepSeek-V4-Flash-0731');
+  const [selectedModel, setSelectedModel] = useState<string>('');
   const [selectedModule, setSelectedModule] = useState<InitiatingModule>('monitoring_test');
   const [testPrompt, setTestPrompt] = useState<string>(PRESET_PROMPTS[0].prompt);
   const [runningTest, setRunningTest] = useState(false);
@@ -153,9 +153,14 @@ export default function AmdMonitoringCentrePage() {
       } else {
         setData(body);
         setError(null);
-        if (body.connection?.selectedModel && !selectedModel) {
-          setSelectedModel(body.connection.selectedModel);
-        }
+        // Only select a model present in AMD's live catalog. Never retain
+        // a retired model ID or silently inject hard-coded alternatives.
+        const available: string[] = Array.isArray(body.connection?.models) ? body.connection.models : [];
+        setSelectedModel(previous =>
+          available.includes(previous) ? previous :
+          available.includes(body.connection?.selectedModel) ? body.connection.selectedModel :
+          available[0] || ''
+        );
       }
     } catch (err: any) {
       setError(err.message || 'Network error fetching AMD telemetry');
@@ -171,6 +176,10 @@ export default function AmdMonitoringCentrePage() {
 
   const handleRunAmdTest = async () => {
     if (!testPrompt.trim()) return;
+    if (!selectedModel || !(data?.connection?.models || []).includes(selectedModel)) {
+      setTestError('No valid AMD model is selected. Refresh the live model catalog before testing.');
+      return;
+    }
     setRunningTest(true);
     setTestError(null);
 
@@ -465,7 +474,7 @@ export default function AmdMonitoringCentrePage() {
                     onChange={(e) => setSelectedModel(e.target.value)}
                     className="bg-transparent text-xs text-white font-medium focus:outline-none cursor-pointer"
                   >
-                    {(data?.connection.models || ['DeepSeek-V4-Flash-0731', 'Qwen3.8-Flash-Next', 'deepseek-ai/DeepSeek-V3', 'meta-llama/Meta-Llama-3-8B-Instruct']).map((m) => (
+                    {(data?.connection.models || []).map((m) => (
                       <option key={m} value={m} className="bg-zinc-900 text-white">
                         {m}
                       </option>
