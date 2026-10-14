@@ -37,6 +37,7 @@ import { CreativeOrchestrator } from './creativeOrchestrator.service';
 import { CreativeAssetService } from './creativeAsset.service';
 import { MariCreativeIntelligenceService } from './mariCreativeIntelligence.service';
 import { AmdTokenFactoryService } from './amdTokenFactory.service';
+import { AdaptiveModelRouter } from './adaptiveModelRouter.service';
 
 const MARI_CLASSIFIER_MODEL = process.env.MARI_GEMINI_CLASSIFIER_MODEL || 'gemini-3.6-flash';
 const MARI_RESPONSE_MODEL = process.env.MARI_GEMINI_MODEL || process.env.GEMINI_MODEL || 'gemini-3.6-flash';
@@ -1213,8 +1214,17 @@ async function callAmdNeuralCore(
       content: cleanUserPrompt.slice(0, 3900),
     });
 
+    const routingDecision = await AdaptiveModelRouter.decideRoute({
+      prompt: cleanUserPrompt,
+      module: moduleTag,
+      workspaceId: workspaceId || 'c0000000-0000-0000-0000-000000000001',
+    });
+    const chosenModel = routingDecision.selectedModel || AmdTokenFactoryService.DEFAULT_MODEL;
+    modelsAttempted.length = 0;
+    modelsAttempted.push(chosenModel);
+
     const completion = await AmdTokenFactoryService.createChatCompletion({
-      model: AmdTokenFactoryService.DEFAULT_MODEL,
+      model: chosenModel,
       messages,
       temperature: 0.7,
       max_tokens: 1024,

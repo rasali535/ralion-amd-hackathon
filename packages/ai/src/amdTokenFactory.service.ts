@@ -213,6 +213,75 @@ export class AmdTokenFactoryService {
     return process.env.AMD_TOKEN_FACTORY_URL || this.DEFAULT_BASE_URL;
   }
 
+  // Dynamic live AMD model catalog cache (60s TTL)
+  private static cachedCatalog: { models: string[]; timestamp: number } | null = null;
+  private static readonly CATALOG_CACHE_TTL_MS = 60_000;
+
+  /**
+   * Retrieves the current AMD model catalog dynamically from the live provider (GET /models).
+   * Caches results for 60 seconds. Falls back to verified known models when offline or in fixture mode.
+   */
+  public static async getAvailableModels(): Promise<string[]> {
+    const now = Date.now();
+    if (this.cachedCatalog && (now - this.cachedCatalog.timestamp < this.CATALOG_CACHE_TTL_MS)) {
+      return this.cachedCatalog.models;
+    }
+
+    const apiKey = this.getApiKey();
+    if (!apiKey) {
+      return [...this.ALLOWED_MODELS];
+    }
+
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 4000);
+      const res = await fetch(`${this.getBaseUrl()}/models`, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        signal: controller.signal,
+      });
+      clearTimeout(timeout);
+
+      if (res.ok) {
+        const body = await res.json();
+        const liveModels = Array.isArray(body?.data)
+          ? body.data.map((m: any) => (typeof m === 'string' ? m : m.id)).filter(Boolean)
+          : [];
+        if (liveModels.length > 0) {
+          this.cachedCatalog = { models: liveModels, timestamp: now };
+          return liveModels;
+        }
+      }
+    } catch {
+      // Graceful fallback to cached or verified baseline on network exception
+    }
+
+    if (this.cachedCatalog?.models?.length) {
+      return this.cachedCatalog.models;
+    }
+    return [...this.ALLOWED_MODELS];
+  }
+
+  /**
+   * Validates whether a model exists in the current AMD catalog.
+   */
+  public static async isModelAvailable(modelId: string): Promise<boolean> {
+    if (!modelId) return false;
+    const currentModels = await this.getAvailableModels();
+    return currentModels.includes(modelId);
+  }
+
+  /**
+   * Resolves the active default model from the current AMD catalog.
+   */
+  public static async resolveDefaultModel(): Promise<string> {
+    const currentModels = await this.getAvailableModels();
+    return currentModels[0] || this.DEFAULT_MODEL;
+  }
+
   /**
    * Generates a deterministic or pseudo-unique trace correlation ID.
    */
@@ -370,6 +439,9 @@ export class AmdTokenFactoryService {
 
       const data = await response.json();
       const models = Array.isArray(data?.data) ? data.data.map((m: any) => m.id) : ['DeepSeek-V4-Flash-0731'];
+      if (models.length > 0) {
+        this.cachedCatalog = { models, timestamp: Date.now() };
+      }
 
       return {
         status: 'LIVE',
@@ -458,11 +530,13 @@ export class AmdTokenFactoryService {
     const workspaceId = request.workspaceId || 'c0000000-0000-0000-0000-000000000001';
     const startTime = Date.now();
 
-    // 1. Model allowlisting and verification (Requirement 2 & 5)
-    const requestedModel = request.model || this.DEFAULT_MODEL;
-    if (!this.ALLOWED_MODELS.includes(requestedModel as any)) {
+    // 1. Model allowlisting and verification using the current AMD catalog (Requirement 2 & 5)
+    const availableModels = await this.getAvailableModels();
+    const defaultModel = await this.resolveDefaultModel();
+    const requestedModel = request.model || defaultModel;
+    if (!availableModels.includes(requestedModel)) {
       throw new Error(
-        `Requested model "${requestedModel}" is unavailable. Available verified AMD models: ${this.ALLOWED_MODELS.join(', ')}`
+        `Requested model "${requestedModel}" is unavailable. Available verified AMD models: ${availableModels.join(', ')}`
       );
     }
     const model = requestedModel;

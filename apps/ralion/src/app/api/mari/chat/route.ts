@@ -1,5 +1,5 @@
 import { NextRequest } from 'next/server';
-import { AmdTokenFactoryService } from '@ralion/ai/server';
+import { AmdTokenFactoryService, AdaptiveModelRouter } from '@ralion/ai/server';
 import { reserveHackathonInference } from '@/lib/amd/hackathonQuota';
 import { corsJsonResponse, handleCorsPreflight } from '../../../../lib/cors';
 import {
@@ -262,7 +262,8 @@ export async function POST(request: NextRequest) {
         return corsJsonResponse({ success: false, code: 'DAILY_AI_LIMIT_REACHED', error: 'Daily AMD demo allowance reached. You can still explore the guided walkthrough.', resetAt: budget.resetAt }, { status: 429 }, request);
       }
       try {
-        const result = await AmdTokenFactoryService.createChatCompletion({
+        const result = await AdaptiveModelRouter.executeWithAdaptiveRouting({
+          prompt: cleanQuery,
           messages: [
             { role: 'system', content: 'You are Mari AI, business growth partner to the fictional Botswana safari company Kalahari & Okavango Wilderness Expeditions. Give concise, practical, Botswana-specific recommendations. The company offers two synthetic example campaigns: luxury Okavango Untamed and adventure Botswana Frontier. Do not invent actual sales, audience research, or social metrics. Identify any assumptions. This is a hackathon demonstration.' },
             { role: 'user', content: cleanQuery },
@@ -281,6 +282,7 @@ export async function POST(request: NextRequest) {
           isRealAmdInference: Boolean(result.isRealAmdInference),
           isFixture: Boolean(result.isFixture),
           traceId: result.traceId,
+          routingDecision: result.routingDecision,
           usage: { promptTokens: result.usage?.prompt_tokens || 0, completionTokens: result.usage?.completion_tokens || 0, totalTokens: result.usage?.total_tokens || 0, creditsDeducted: 0 },
           detectedIntent: 'GROWTH_STRATEGY',
           capabilityMode: 'BUSINESS',

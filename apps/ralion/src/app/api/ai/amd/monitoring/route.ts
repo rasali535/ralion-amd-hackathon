@@ -2,7 +2,7 @@ import { reserveHackathonInference } from '@/lib/amd/hackathonQuota';
 import { NextRequest } from 'next/server';
 import { resolveRalionAuthContext } from '@/lib/auth/serverAuth';
 import { corsJsonResponse, handleCorsPreflight } from '@/lib/cors';
-import { AmdTokenFactoryService, AmdInitiatingModule } from '@ralion/ai/server';
+import { AmdTokenFactoryService, AmdInitiatingModule, AdaptiveModelRouter } from '@ralion/ai/server';
 
 export const dynamic = 'force-dynamic';
 
@@ -17,6 +17,7 @@ export async function OPTIONS(request: NextRequest) {
  * - Available models and selected default
  * - Usage and quota details from GET /usage?include_recent=true
  * - Recent request logs with module identification, trace IDs, latency, and status
+ * - Optional zero-token routing decision preview via ?action=routing-decision
  */
 export async function GET(request: NextRequest) {
   const auth = await resolveRalionAuthContext(request);
@@ -26,6 +27,24 @@ export async function GET(request: NextRequest) {
       { status: auth.httpStatus },
       request
     );
+  }
+
+  const { searchParams } = new URL(request.url);
+  const action = searchParams.get('action');
+
+  if (action === 'routing-decision' || action === 'routing-preview') {
+    const prompt = searchParams.get('prompt') || '';
+    const moduleTag = (searchParams.get('module') as any) || 'monitoring_test';
+    const preferredModel = searchParams.get('preferredModel') || undefined;
+
+    const decision = await AdaptiveModelRouter.decideRoute({
+      prompt,
+      module: moduleTag,
+      workspaceId: auth.context.workspace.id,
+      preferredModel: preferredModel && preferredModel !== 'auto' ? preferredModel : undefined,
+    });
+
+    return corsJsonResponse({ success: true, workspaceId: auth.context.workspace.id, decision }, { status: 200 }, request);
   }
 
   try {
@@ -226,16 +245,20 @@ export async function POST(request: NextRequest) {
       messages = [{ role: 'user', content: rawPrompt }];
     }
 
-    if (body?.model && !AmdTokenFactoryService.ALLOWED_MODELS.includes(body.model)) {
-      return corsJsonResponse(
-        {
-          success: false,
-          error: 'MODEL_NOT_FOUND',
-          message: `Model '${body.model}' is unavailable. Available verified AMD models: ${AmdTokenFactoryService.ALLOWED_MODELS.join(', ')}`,
-        },
-        { status: 400 },
-        request
-      );
+    if (body?.model) {
+      const isAvailable = await AmdTokenFactoryService.isModelAvailable(body.model);
+      if (!isAvailable) {
+        const availableModels = await AmdTokenFactoryService.getAvailableModels();
+        return corsJsonResponse(
+          {
+            success: false,
+            error: 'MODEL_NOT_FOUND',
+            message: `Model '${body.model}' is unavailable in current AMD catalog. Available verified AMD models: ${availableModels.join(', ')}`,
+          },
+          { status: 400 },
+          request
+        );
+      }
     }
 
     const moduleTag: AmdInitiatingModule = ['mari', 'growth', 'creative', 'monitoring_test'].includes(body?.module)
@@ -262,8 +285,16 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    const requestedModel = body?.model && body.model !== 'auto' ? body.model : undefined;
+    const routingDecision = await AdaptiveModelRouter.decideRoute({
+      prompt: messages[messages.length - 1]?.content || '',
+      module: moduleTag,
+      workspaceId: auth.context.workspace.id,
+      preferredModel: requestedModel,
+    });
+
     const result = await AmdTokenFactoryService.createChatCompletion({
-      model: body?.model,
+      model: routingDecision.selectedModel,
       messages,
       temperature: body?.temperature,
       max_tokens: body?.max_tokens,
@@ -289,6 +320,7 @@ export async function POST(request: NextRequest) {
         isFixture: result.isFixture ?? false,
         fixtureNotice: result.fixtureNotice,
         finishReason: result.choices?.[0]?.finish_reason || 'stop',
+        routingDecision,
         timestamp: new Date().toISOString(),
       },
       { status: 200 },

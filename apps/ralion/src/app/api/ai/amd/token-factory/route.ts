@@ -248,16 +248,20 @@ export async function POST(request: NextRequest) {
       messages = [{ role: 'user', content: rawPrompt }];
     }
 
-    if (body?.model && !AmdTokenFactoryService.ALLOWED_MODELS.includes(body.model)) {
-      return corsJsonResponse(
-        {
-          success: false,
-          error: 'MODEL_NOT_FOUND',
-          message: `Model '${body.model}' is unavailable. Available verified AMD models: ${AmdTokenFactoryService.ALLOWED_MODELS.join(', ')}`,
-        },
-        { status: 400 },
-        request
-      );
+    if (body?.model) {
+      const isAvailable = await AmdTokenFactoryService.isModelAvailable(body.model);
+      if (!isAvailable) {
+        const availableModels = await AmdTokenFactoryService.getAvailableModels();
+        return corsJsonResponse(
+          {
+            success: false,
+            error: 'MODEL_NOT_FOUND',
+            message: `Model '${body.model}' is unavailable in current AMD catalog. Available verified AMD models: ${availableModels.join(', ')}`,
+          },
+          { status: 400 },
+          request
+        );
+      }
     }
 
     const moduleTag: AmdInitiatingModule = ['mari', 'growth', 'creative', 'monitoring_test'].includes(body.module)
