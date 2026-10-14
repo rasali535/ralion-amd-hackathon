@@ -22,6 +22,7 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en" className="dark" suppressHydrationWarning>
+      <head />
       <body className="bg-zinc-950 text-zinc-100 font-sans antialiased flex flex-col h-screen overflow-hidden" suppressHydrationWarning>
         <DesktopNetworkBootstrap>
           <RalionAuthProvider>

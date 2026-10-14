@@ -239,27 +239,55 @@ export async function POST(request: NextRequest) {
     const isHackathonWorkspace =
       serverCtx.workspace.id === 'c0000000-0000-0000-0000-000000000001' ||
       serverCtx.workspace.id === 'demo-workspace-ralion-amd-2026';
+
+    const isPrivilegedOperator =
+      Boolean(serverCtx.isPlatformAdmin) ||
+      serverCtx.membership?.role === 'owner' ||
+      serverCtx.membership?.role === 'admin';
+
+    // Viewer role, anonymous, or explicit guest users are subject to guest daily quota (8/day)
     const isJudgeGuest =
-      isHackathonWorkspace ||
-      serverCtx.membership?.role === 'viewer';
-    if (isJudgeGuest) {
+      !isPrivilegedOperator && (
+        serverCtx.membership?.role === 'viewer' ||
+        Boolean((serverCtx.user as any)?.is_anonymous) ||
+        Boolean(serverCtx.user?.email?.includes('guest'))
+      );
+
+    if (isHackathonWorkspace) {
       if (cleanQuery.length > 4000) {
         return corsJsonResponse({ success: false, code: 'CONTENT_LENGTH_EXCEEDED', error: 'Message exceeds 4,000 characters.' }, { status: 400 }, request);
       }
-      const throttle = AmdTokenFactoryService.checkDistributedRateLimit(serverCtx.workspace.id);
-      if (!throttle.allowed) {
-        return corsJsonResponse({ success: false, code: 'RATE_LIMITED', error: 'Please wait before submitting another message.' }, { status: 429 }, request);
-      }
-      let budget;
-      try {
-        budget = await reserveHackathonInference(serverCtx.user.id);
-      } catch (err: any) {
-        console.warn('[HackathonMari] Quota lookup notice, using rate-limit fallback:', err?.message || err);
-        const rate = AmdTokenFactoryService.checkDistributedRateLimit(serverCtx.user.id, 8, 86400000);
-        budget = { allowed: rate.allowed, remaining: rate.remaining, resetAt: new Date(Date.now() + (rate.retryAfterMs || 86400000)).toISOString() };
-      }
-      if (!budget.allowed) {
-        return corsJsonResponse({ success: false, code: 'DAILY_AI_LIMIT_REACHED', error: 'Daily AMD demo allowance reached. You can still explore the guided walkthrough.', resetAt: budget.resetAt }, { status: 429 }, request);
+
+      // Resolve quota subject: guests use unique ID or IP-scoped bucket so one visitor cannot exhaust another's quota
+      const clientIp = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ||
+                       request.headers.get('x-real-ip') ||
+                       request.headers.get('cf-connecting-ip') ||
+                       'anonymous-guest';
+      const quotaSubject = serverCtx.user.id === 'a0000000-0000-0000-0000-000000000001'
+        ? `guest-ip-${clientIp.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 48)}`
+        : serverCtx.user.id;
+
+      if (isJudgeGuest) {
+        const throttle = AmdTokenFactoryService.checkDistributedRateLimit(quotaSubject, 15, 60_000);
+        if (!throttle.allowed) {
+          return corsJsonResponse({ success: false, code: 'RATE_LIMITED', error: 'Please wait before submitting another message.' }, { status: 429 }, request);
+        }
+        let budget;
+        try {
+          budget = await reserveHackathonInference(quotaSubject);
+        } catch (err: any) {
+          console.warn('[HackathonMari] Quota lookup notice, using rate-limit fallback:', err?.message || err);
+          const rate = AmdTokenFactoryService.checkDistributedRateLimit(quotaSubject, 8, 86400000);
+          budget = { allowed: rate.allowed, remaining: rate.remaining, resetAt: new Date(Date.now() + (rate.retryAfterMs || 86400000)).toISOString() };
+        }
+        if (!budget.allowed) {
+          return corsJsonResponse({
+            success: false,
+            code: 'DAILY_AI_LIMIT_REACHED',
+            error: 'Daily AMD demo allowance reached (8/8 queries used today). The quota will reset automatically tomorrow. You can still explore the guided walkthrough or test models in the AMD AI Monitoring Centre.',
+            resetAt: budget.resetAt
+          }, { status: 429 }, request);
+        }
       }
       try {
         const result = await AdaptiveModelRouter.executeWithAdaptiveRouting({
