@@ -121,6 +121,12 @@ const nextConfig = {
         basePath: false,
       },
       {
+        source: '/amd-monitoring',
+        destination: '/ralion/amd-monitoring',
+        permanent: false,
+        basePath: false,
+      },
+      {
         source: '/billing',
         destination: '/ralion/billing',
         permanent: false,
